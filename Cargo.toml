@@ -1,0 +1,18 @@
+[package]
+name = "cargo-3ds"
+version = "0.1.0"
+description = "Cargo wrapper for developing Rust-based Nintendo 3DS homebrew apps"
+repository = "https://github.com/Meziu/cargo-3ds"
+license = "MIT"
+authors = [ "Andrea Ciliberti <meziu210@icloud.com>" ]
+edition = "2018"
+
+[dependencies]
+clap = "2.33.1"
+goblin = "0.4.3"
+scroll = "0.10.1"
+cargo_metadata = "0.14.0"
+rustc_version = "0.4.0"
+serde = "1.0.111"
+serde_derive = "1.0.111"
+toml = "0.5.6"
