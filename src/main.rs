@@ -110,7 +110,7 @@ fn check_rust_version() {
 
 fn build_elf(args: std::iter::Skip<env::Args>) {
     let rustflags = env::var("RUSTFLAGS").unwrap_or("".into())
-    + "-Clink-arg=-specs=3dsx.specs -Clink-arg=-z -Clink-arg=muldefs -Clink-arg=-D__3DS__";
+    + "-Clink-arg=-z -Clink-arg=muldefs -Clink-arg=-D__3DS__";
 
     let mut process = Command::new("cargo")
         .arg("build")
