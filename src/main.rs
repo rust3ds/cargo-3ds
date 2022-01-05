@@ -1,7 +1,8 @@
 use cargo_metadata::MetadataCommand;
 use rustc_version::{Channel, Version};
+use std::path::Path;
 use std::{
-    env, fmt, fs,
+    env, fmt,
     process::{self, Command, Stdio},
 };
 
@@ -22,7 +23,7 @@ struct CommitDate {
 
 impl CommitDate {
     fn parse(date: &str) -> Option<Self> {
-        let mut iter = date.split("-");
+        let mut iter = date.split('-');
 
         let year = iter.next()?.parse().ok()?;
         let month = iter.next()?.parse().ok()?;
@@ -41,15 +42,14 @@ impl fmt::Display for CommitDate {
 const MINIMUM_COMMIT_DATE: CommitDate = CommitDate {
     year: 2021,
     month: 10,
-    day: 01,
+    day: 1,
 };
 const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 56, 0);
 
 fn main() {
     check_rust_version();
 
-    let args: Vec<String> = env::args().collect();
-    let optimization_level = match args.contains(&String::from("--release")) {
+    let optimization_level = match env::args().any(|arg| arg == "--release") {
         true => String::from("release"),
         false => String::from("debug"),
     };
@@ -89,7 +89,7 @@ fn check_rust_version() {
         process::exit(1);
     }
 
-    let old_version: bool = MINIMUM_RUSTC_VERSION > rustc_version.semver.clone();
+    let old_version: bool = MINIMUM_RUSTC_VERSION > rustc_version.semver;
 
     let old_commit = match rustc_version.commit_date {
         None => false,
@@ -130,12 +130,7 @@ fn build_elf(args: std::iter::Skip<env::Args>) {
     let status = process.wait().unwrap();
 
     if !status.success() {
-        let code = match status.code() {
-            Some(i) => i,
-            None => 1,
-        };
-
-        process::exit(code);
+        process::exit(status.code().unwrap_or(1));
     }
 }
 
@@ -148,7 +143,7 @@ fn get_metadata() -> CTRConfig {
 
     let icon = String::from("./icon.png");
 
-    let icon = if let Err(_) = fs::File::open(&icon) {
+    let icon = if !Path::new(&icon).exists() {
         format!(
             "{}/libctru/default_icon.png",
             env::var("DEVKITPRO").unwrap()
@@ -163,8 +158,8 @@ fn get_metadata() -> CTRConfig {
         description: root_crate
             .description
             .clone()
-            .unwrap_or(String::from("Homebrew Application")),
-        icon: icon,
+            .unwrap_or_else(|| String::from("Homebrew Application")),
+        icon,
     }
 }
 
@@ -188,12 +183,7 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
     let status = process.wait().unwrap();
 
     if !status.success() {
-        let code = match status.code() {
-            Some(i) => i,
-            None => 1,
-        };
-
-        process::exit(code);
+        process::exit(status.code().unwrap_or(1));
     }
 
     let mut command = Command::new("3dsxtool");
@@ -212,7 +202,7 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
         ));
 
     // If romfs directory exists, automatically include it
-    if let Ok(_) = std::fs::read_dir("./romfs") {
+    if Path::new("./romfs").is_dir() {
         process = process.arg("--romfs=\"./romfs\"");
     }
 
@@ -226,12 +216,7 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
     let status = process.wait().unwrap();
 
     if !status.success() {
-        let code = match status.code() {
-            Some(i) => i,
-            None => 1,
-        };
-
-        process::exit(code);
+        process::exit(status.code().unwrap_or(1));
     }
 }
 
@@ -250,11 +235,6 @@ fn link(name: &str, opt_lvl: &str) {
     let status = process.wait().unwrap();
 
     if !status.success() {
-        let code = match status.code() {
-            Some(i) => i,
-            None => 1,
-        };
-
-        process::exit(code);
+        process::exit(status.code().unwrap_or(1));
     }
 }
