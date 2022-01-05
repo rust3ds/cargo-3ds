@@ -111,8 +111,6 @@ fn check_rust_version() {
 }
 
 fn build_elf(args: std::iter::Skip<env::Args>) {
-    let rustflags = env::var("RUSTFLAGS").unwrap_or_default();
-
     let mut process = Command::new("cargo")
         .arg("build")
         .arg("-Z")
@@ -120,7 +118,6 @@ fn build_elf(args: std::iter::Skip<env::Args>) {
         .arg("--target")
         .arg("armv6k-nintendo-3ds")
         .args(args)
-        .env("RUSTFLAGS", rustflags)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
