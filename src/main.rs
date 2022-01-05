@@ -141,16 +141,14 @@ fn get_metadata() -> CTRConfig {
 
     let root_crate = metadata.root_package().expect("No root crate found");
 
-    let icon = String::from("./icon.png");
+    let mut icon = String::from("./icon.png");
 
-    let icon = if !Path::new(&icon).exists() {
-        format!(
+    if !Path::new(&icon).exists() {
+        icon = format!(
             "{}/libctru/default_icon.png",
             env::var("DEVKITPRO").unwrap()
         )
-    } else {
-        icon
-    };
+    }
 
     CTRConfig {
         name: root_crate.name.clone(),
