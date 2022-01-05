@@ -109,13 +109,10 @@ fn check_rust_version() {
 }
 
 fn build_elf(args: std::iter::Skip<env::Args>) {
-    let rustflags = env::var("RUSTFLAGS").unwrap_or("".into())
-    + "-C default-linker-libraries -Clink-arg=-z -Clink-arg=muldefs -Clink-arg=-D__3DS__";
+    let rustflags = env::var("RUSTFLAGS").unwrap_or_default();
 
     let mut process = Command::new("cargo")
         .arg("build")
-        .arg("-Z")
-        .arg("unstable-options")
         .arg("-Z")
         .arg("build-std")
         .arg("--target")
