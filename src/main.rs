@@ -1,7 +1,7 @@
 use cargo_metadata::MetadataCommand;
-use rustc_version::{Version, Channel};
+use rustc_version::{Channel, Version};
 use std::{
-    env, fs, fmt,
+    env, fmt, fs,
     process::{self, Command, Stdio},
 };
 
@@ -38,7 +38,11 @@ impl fmt::Display for CommitDate {
     }
 }
 
-const MINIMUM_COMMIT_DATE: CommitDate = CommitDate { year: 2021, month: 10, day: 01 };
+const MINIMUM_COMMIT_DATE: CommitDate = CommitDate {
+    year: 2021,
+    month: 10,
+    day: 01,
+};
 const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 56, 0);
 
 fn main() {
@@ -56,13 +60,11 @@ fn main() {
     let command = args.next();
     let must_link = match command {
         None => panic!("No command specified, try with \"build\" or \"link\""),
-        Some(s) => {
-            match s.as_str() {
-                "build" => false,
-                "link" => true,
-                _ => panic!("Invalid command, try with \"build\" or \"link\""),
-            }
-        }
+        Some(s) => match s.as_str() {
+            "build" => false,
+            "link" => true,
+            _ => panic!("Invalid command, try with \"build\" or \"link\""),
+        },
     };
 
     build_elf(args);
@@ -91,8 +93,10 @@ fn check_rust_version() {
 
     let old_commit = match rustc_version.commit_date {
         None => false,
-        Some(date) => MINIMUM_COMMIT_DATE > CommitDate::parse(&date)
-            .expect("could not parse `rustc --version` commit date"),
+        Some(date) => {
+            MINIMUM_COMMIT_DATE
+                > CommitDate::parse(&date).expect("could not parse `rustc --version` commit date")
+        }
     };
 
     if old_version || old_commit {
@@ -100,9 +104,7 @@ fn check_rust_version() {
             "cargo-3ds requires rustc nightly version >= {}",
             MINIMUM_COMMIT_DATE,
         );
-        println!(
-            "Please run `rustup update nightly` to upgrade your nightly version"
-        );
+        println!("Please run `rustup update nightly` to upgrade your nightly version");
 
         process::exit(1);
     }
@@ -139,15 +141,18 @@ fn build_elf(args: std::iter::Skip<env::Args>) {
 
 fn get_metadata() -> CTRConfig {
     let metadata = MetadataCommand::new()
-    .exec()
-    .expect("Failed to get cargo metadata");
+        .exec()
+        .expect("Failed to get cargo metadata");
 
     let root_crate = metadata.root_package().expect("No root crate found");
 
     let icon = String::from("./icon.png");
 
     let icon = if let Err(_) = fs::File::open(&icon) {
-        format!("{}/libctru/default_icon.png", env::var("DEVKITPRO").unwrap())
+        format!(
+            "{}/libctru/default_icon.png",
+            env::var("DEVKITPRO").unwrap()
+        )
     } else {
         icon
     };
@@ -155,7 +160,10 @@ fn get_metadata() -> CTRConfig {
     CTRConfig {
         name: root_crate.name.clone(),
         author: root_crate.authors[0].clone(),
-        description: root_crate.description.clone().unwrap_or(String::from("Homebrew Application")),
+        description: root_crate
+            .description
+            .clone()
+            .unwrap_or(String::from("Homebrew Application")),
         icon: icon,
     }
 }
@@ -167,7 +175,10 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
         .arg(&config.description)
         .arg(&config.author)
         .arg(&config.icon)
-        .arg(format!("./target/armv6k-nintendo-3ds/{}/{}.smdh", opt_lvl, config.name))
+        .arg(format!(
+            "./target/armv6k-nintendo-3ds/{}/{}.smdh",
+            opt_lvl, config.name
+        ))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -187,16 +198,26 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
 
     let mut command = Command::new("3dsxtool");
     let mut process = command
-        .arg(format!("./target/armv6k-nintendo-3ds/{}/{}.elf", opt_lvl, config.name))
-        .arg(format!("./target/armv6k-nintendo-3ds/{}/{}.3dsx", opt_lvl, config.name))
-        .arg(format!("--smdh=./target/armv6k-nintendo-3ds/{}/{}.smdh", opt_lvl, config.name));
+        .arg(format!(
+            "./target/armv6k-nintendo-3ds/{}/{}.elf",
+            opt_lvl, config.name
+        ))
+        .arg(format!(
+            "./target/armv6k-nintendo-3ds/{}/{}.3dsx",
+            opt_lvl, config.name
+        ))
+        .arg(format!(
+            "--smdh=./target/armv6k-nintendo-3ds/{}/{}.smdh",
+            opt_lvl, config.name
+        ));
 
     // If romfs directory exists, automatically include it
     if let Ok(_) = std::fs::read_dir("./romfs") {
         process = process.arg("--romfs=\"./romfs\"");
     }
 
-    let mut process = process.stdin(Stdio::inherit())
+    let mut process = process
+        .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
@@ -216,7 +237,10 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
 
 fn link(name: &str, opt_lvl: &str) {
     let mut process = Command::new("3dslink")
-        .arg(format!("./target/armv6k-nintendo-3ds/{}/{}.3dsx", opt_lvl, name))
+        .arg(format!(
+            "./target/armv6k-nintendo-3ds/{}/{}.3dsx",
+            opt_lvl, name
+        ))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
