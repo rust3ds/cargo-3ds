@@ -1,4 +1,4 @@
-use cargo_metadata::MetadataCommand;
+use cargo_metadata::{MetadataCommand, Package};
 use rustc_version::{Channel, Version};
 use std::path::Path;
 use std::{
@@ -12,6 +12,7 @@ struct CTRConfig {
     author: String,
     description: String,
     icon: String,
+    target_path: String,
 }
 
 #[derive(Ord, PartialOrd, PartialEq, Eq, Debug)]
@@ -57,7 +58,11 @@ fn main() {
     // Skip `cargo 3ds`
     let mut args = env::args().skip(2);
 
+    // Get the command and collect the remaining arguments
     let command = args.next();
+    let args: Vec<String> = args.collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
     let must_link = match command {
         None => panic!("No command specified, try with \"build\" or \"link\""),
         Some(s) => match s.as_str() {
@@ -67,13 +72,21 @@ fn main() {
         },
     };
 
-    build_elf(args);
+    eprintln!("Building ELF");
+    build_elf(&args);
 
-    let app_conf = get_metadata();
-    build_3dsx(&app_conf, &optimization_level);
+    eprintln!("Getting metadata");
+    let app_conf = get_metadata(&args, &optimization_level);
+
+    eprintln!("Building smdh");
+    build_smdh(&app_conf);
+
+    eprintln!("Building 3dsx");
+    build_3dsx(&app_conf);
 
     if must_link {
-        link(&app_conf.name, &optimization_level);
+        eprintln!("Running 3dslink");
+        link(&app_conf);
     }
 }
 
@@ -110,7 +123,7 @@ fn check_rust_version() {
     }
 }
 
-fn build_elf(args: std::iter::Skip<env::Args>) {
+fn build_elf(args: &[&str]) {
     let rustflags = format!("-L{}/libctru/lib -lctru ", env::var("DEVKITPRO").unwrap());
 
     let mut process = Command::new("cargo")
@@ -134,12 +147,45 @@ fn build_elf(args: std::iter::Skip<env::Args>) {
     }
 }
 
-fn get_metadata() -> CTRConfig {
+fn get_metadata(args: &[&str], opt_level: &str) -> CTRConfig {
     let metadata = MetadataCommand::new()
         .exec()
         .expect("Failed to get cargo metadata");
+    let target_dir = &metadata.target_directory;
 
-    let root_crate = metadata.root_package().expect("No root crate found");
+    let package: &Package;
+    let binary_name: String;
+    let target_path: String;
+
+    // Check if we compiled the crate or an example
+    if let Some(example_pos) = args.iter().position(|arg| *arg == "--example") {
+        let example_name = *args.get(example_pos + 1).expect("No example given");
+
+        // Find the example's package
+        package = metadata
+            .packages
+            .iter()
+            .find(|pkg| {
+                pkg.targets.iter().any(|target| {
+                    target.name == example_name && target.kind.iter().any(|kind| kind == "example")
+                })
+            })
+            .expect("Could not find package for example");
+
+        binary_name = format!("{} - {} example", example_name, package.name);
+        target_path = format!(
+            "{}/armv6k-nintendo-3ds/{}/examples/{}",
+            target_dir, opt_level, example_name
+        );
+    } else {
+        // Otherwise get the current/root crate
+        package = metadata.root_package().expect("No root crate found");
+        binary_name = package.name.clone();
+        target_path = format!(
+            "{}/armv6k-nintendo-3ds/{}/{}",
+            target_dir, opt_level, package.name
+        );
+    }
 
     let mut icon = String::from("./icon.png");
 
@@ -151,27 +197,25 @@ fn get_metadata() -> CTRConfig {
     }
 
     CTRConfig {
-        name: root_crate.name.clone(),
-        author: root_crate.authors[0].clone(),
-        description: root_crate
+        name: binary_name,
+        author: package.authors[0].clone(),
+        description: package
             .description
             .clone()
             .unwrap_or_else(|| String::from("Homebrew Application")),
         icon,
+        target_path,
     }
 }
 
-fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
+fn build_smdh(config: &CTRConfig) {
     let mut process = Command::new("smdhtool")
         .arg("--create")
         .arg(&config.name)
         .arg(&config.description)
         .arg(&config.author)
         .arg(&config.icon)
-        .arg(format!(
-            "./target/armv6k-nintendo-3ds/{}/{}.smdh",
-            opt_lvl, config.name
-        ))
+        .arg(format!("{}.smdh", config.target_path))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -183,21 +227,14 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
+}
 
+fn build_3dsx(config: &CTRConfig) {
     let mut command = Command::new("3dsxtool");
     let mut process = command
-        .arg(format!(
-            "./target/armv6k-nintendo-3ds/{}/{}.elf",
-            opt_lvl, config.name
-        ))
-        .arg(format!(
-            "./target/armv6k-nintendo-3ds/{}/{}.3dsx",
-            opt_lvl, config.name
-        ))
-        .arg(format!(
-            "--smdh=./target/armv6k-nintendo-3ds/{}/{}.smdh",
-            opt_lvl, config.name
-        ));
+        .arg(format!("{}.elf", config.target_path))
+        .arg(format!("{}.3dsx", config.target_path))
+        .arg(format!("--smdh={}.smdh", config.target_path));
 
     // If romfs directory exists, automatically include it
     if Path::new("./romfs").is_dir() {
@@ -218,12 +255,9 @@ fn build_3dsx(config: &CTRConfig, opt_lvl: &str) {
     }
 }
 
-fn link(name: &str, opt_lvl: &str) {
+fn link(config: &CTRConfig) {
     let mut process = Command::new("3dslink")
-        .arg(format!(
-            "./target/armv6k-nintendo-3ds/{}/{}.3dsx",
-            opt_lvl, name
-        ))
+        .arg(format!("{}.3dsx", config.target_path))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
