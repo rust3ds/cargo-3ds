@@ -124,7 +124,8 @@ fn check_rust_version() {
 }
 
 fn build_elf(args: &[&str]) {
-    let rustflags = format!("-L{}/libctru/lib -lctru ", env::var("DEVKITPRO").unwrap());
+    let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
+        + &format!(" -L{}/libctru/lib -lctru ", env::var("DEVKITPRO").unwrap());
 
     let mut process = Command::new("cargo")
         .arg("build")
