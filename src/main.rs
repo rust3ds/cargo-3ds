@@ -2,7 +2,7 @@ use cargo_metadata::{MetadataCommand, Package};
 use rustc_version::{Channel, Version};
 use std::path::Path;
 use std::{
-    env, fmt,
+    env, fmt, io,
     process::{self, Command, Stdio},
 };
 
@@ -50,9 +50,15 @@ const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 56, 0);
 fn main() {
     check_rust_version();
 
-    let optimization_level = match env::args().any(|arg| arg == "--release") {
-        true => String::from("release"),
-        false => String::from("debug"),
+    if env::args().any(|arg| arg == "--help" || arg == "-h") {
+        print_usage(&mut io::stdout());
+        return;
+    }
+
+    let optimization_level = if env::args().any(|arg| arg == "--release") {
+        String::from("release")
+    } else {
+        String::from("debug")
     };
 
     // Skip `cargo 3ds`
@@ -63,13 +69,13 @@ fn main() {
     let args: Vec<String> = args.collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
-    let must_link = match command {
-        None => panic!("No command specified, try with \"build\" or \"link\""),
-        Some(s) => match s.as_str() {
-            "build" => false,
-            "link" => true,
-            _ => panic!("Invalid command, try with \"build\" or \"link\""),
-        },
+    let must_link = match command.as_deref() {
+        Some("build") => false,
+        Some("link") => true,
+        _ => {
+            print_usage(&mut io::stderr());
+            process::exit(2)
+        }
     };
 
     eprintln!("Building ELF");
@@ -88,6 +94,45 @@ fn main() {
         eprintln!("Running 3dslink");
         link(&app_conf);
     }
+}
+
+fn print_usage(f: &mut impl std::io::Write) {
+    let invocation = {
+        let mut args = std::env::args();
+
+        // We do this to properly display `cargo-3ds` if invoked that way
+        let bin = args.next().unwrap();
+        if let Some("3ds") = args.next().as_deref() {
+            "cargo 3ds".to_string()
+        } else {
+            bin
+        }
+    };
+
+    writeln!(
+        f,
+        "{name}: {description}.
+
+Usage:
+    {invocation} build [--release] [CARGO_OPTS...]
+    {invocation} link [--release] [CARGO_OPTS...]
+    {invocation} -h | --help
+
+Commands:
+    build   build a 3dsx executable.
+    link    build a 3dsx executable and send it to a device with 3dslink.
+
+Options:
+    -h --help       Show this screen.
+    --release       Build in release mode.
+
+Additional arguments will be passed through to `cargo build`.
+",
+        name = env!("CARGO_BIN_NAME"),
+        description = env!("CARGO_PKG_DESCRIPTION"),
+        invocation = invocation,
+    )
+    .unwrap();
 }
 
 fn check_rust_version() {
@@ -193,7 +238,7 @@ fn get_metadata(args: &[&str], opt_level: &str) -> CTRConfig {
         icon = format!(
             "{}/libctru/default_icon.png",
             env::var("DEVKITPRO").unwrap()
-        )
+        );
     }
 
     CTRConfig {
