@@ -70,7 +70,7 @@ fn main() {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
     let (command, must_link) = match command.as_deref() {
-        Some("link") => ("link", true),
+        Some("link") => ("build", true),
         Some(command) => (command, false),
         None => {
             print_usage(&mut io::stderr());
@@ -81,7 +81,7 @@ fn main() {
     eprintln!("Running Cargo");
     build_elf(command, &args);
 
-    if !["build", "link"].contains(&command) {
+    if command != "build" && !must_link {
         // We only do more work if it's a build or build + 3dslink operation
         return;
     }
