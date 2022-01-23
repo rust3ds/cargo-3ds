@@ -284,7 +284,7 @@ fn build_3dsx(config: &CTRConfig) {
 
     // If romfs directory exists, automatically include it
     if Path::new("./romfs").is_dir() {
-        process = process.arg("--romfs=\"./romfs\"");
+        process = process.arg("--romfs=./romfs");
     }
 
     let mut process = process
