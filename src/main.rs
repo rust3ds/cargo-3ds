@@ -69,17 +69,22 @@ fn main() {
     let args: Vec<String> = args.collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
-    let must_link = match command.as_deref() {
-        Some("build") => false,
-        Some("link") => true,
-        _ => {
+    let (command, must_link) = match command.as_deref() {
+        Some("link") => ("link", true),
+        Some(command) => (command, false),
+        None => {
             print_usage(&mut io::stderr());
             process::exit(2)
         }
     };
 
-    eprintln!("Building ELF");
-    build_elf(&args);
+    eprintln!("Running Cargo");
+    build_elf(command, &args);
+
+    if !["build", "link"].contains(&command) {
+        // We only do more work if it's a build or build + 3dslink operation
+        return;
+    }
 
     eprintln!("Getting metadata");
     let app_conf = get_metadata(&args, &optimization_level);
@@ -116,11 +121,13 @@ fn print_usage(f: &mut impl std::io::Write) {
 Usage:
     {invocation} build [--release] [CARGO_OPTS...]
     {invocation} link [--release] [CARGO_OPTS...]
+    {invocation} <cargo-command> [CARGO_OPTS...]
     {invocation} -h | --help
 
 Commands:
-    build   build a 3dsx executable.
-    link    build a 3dsx executable and send it to a device with 3dslink.
+    build           build a 3dsx executable.
+    link            build a 3dsx executable and send it to a device with 3dslink.
+    <cargo-command> execute some other Cargo command with 3ds options configured (ex. check or clippy).
 
 Options:
     -h --help       Show this screen.
@@ -168,12 +175,12 @@ fn check_rust_version() {
     }
 }
 
-fn build_elf(args: &[&str]) {
+fn build_elf(command: &str, args: &[&str]) {
     let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
         + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
 
     let mut process = Command::new("cargo")
-        .arg("build")
+        .arg(command)
         .arg("-Z")
         .arg("build-std")
         .arg("--target")
