@@ -1,6 +1,6 @@
 use cargo_metadata::{MetadataCommand, Package};
 use rustc_version::{Channel, Version};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{
     env, fmt, io,
     process::{self, Command, Stdio},
@@ -13,6 +13,7 @@ struct CTRConfig {
     description: String,
     icon: String,
     target_path: String,
+    cargo_manifest_path: PathBuf,
 }
 
 #[derive(Ord, PartialOrd, PartialEq, Eq, Debug)]
@@ -258,6 +259,7 @@ fn get_metadata(args: &[&str], opt_level: &str) -> CTRConfig {
             .unwrap_or_else(|| String::from("Homebrew Application")),
         icon,
         target_path,
+        cargo_manifest_path: package.manifest_path.clone().into(),
     }
 }
 
@@ -290,8 +292,10 @@ fn build_3dsx(config: &CTRConfig) {
         .arg(format!("--smdh={}.smdh", config.target_path));
 
     // If romfs directory exists, automatically include it
-    if Path::new("./romfs").is_dir() {
-        process = process.arg("--romfs=./romfs");
+    let romfs_path = get_romfs_path(config);
+    if romfs_path.is_dir() {
+        println!("Adding RomFS from {}", romfs_path.display());
+        process = process.arg(format!("--romfs={}", romfs_path.display()));
     }
 
     let mut process = process
@@ -322,4 +326,30 @@ fn link(config: &CTRConfig) {
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
+}
+
+/// Read the RomFS path from the Cargo manifest. If it's unset, use the default.
+fn get_romfs_path(config: &CTRConfig) -> PathBuf {
+    let manifest_path = &config.cargo_manifest_path;
+    let manifest_str = std::fs::read_to_string(manifest_path)
+        .unwrap_or_else(|e| panic!("Could not open {}: {e}", manifest_path.display()));
+    let manifest_data: toml::Value =
+        toml::de::from_str(&manifest_str).expect("Could not parse Cargo manifest as TOML");
+
+    // Find the romfs setting and compute the path
+    let romfs_dir_setting = manifest_data
+        .as_table()
+        .and_then(|table| table.get("package"))
+        .and_then(toml::Value::as_table)
+        .and_then(|table| table.get("metadata"))
+        .and_then(toml::Value::as_table)
+        .and_then(|table| table.get("cargo-3ds"))
+        .and_then(toml::Value::as_table)
+        .and_then(|table| table.get("romfs_dir"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("romfs");
+    let mut romfs_path = manifest_path.clone();
+    romfs_path.pop(); // Pop Cargo.toml
+    romfs_path.push(romfs_dir_setting);
+    romfs_path
 }
