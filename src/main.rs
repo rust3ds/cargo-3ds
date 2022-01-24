@@ -292,10 +292,16 @@ fn build_3dsx(config: &CTRConfig) {
         .arg(format!("--smdh={}.smdh", config.target_path));
 
     // If romfs directory exists, automatically include it
-    let romfs_path = get_romfs_path(config);
+    let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
         println!("Adding RomFS from {}", romfs_path.display());
         process = process.arg(format!("--romfs={}", romfs_path.display()));
+    } else if !is_default_romfs {
+        eprintln!(
+            "Could not find configured RomFS dir: {}",
+            romfs_path.display()
+        );
+        process::exit(1);
     }
 
     let mut process = process
@@ -329,7 +335,8 @@ fn link(config: &CTRConfig) {
 }
 
 /// Read the RomFS path from the Cargo manifest. If it's unset, use the default.
-fn get_romfs_path(config: &CTRConfig) -> PathBuf {
+/// The returned boolean is true when the default is used.
+fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
     let manifest_path = &config.cargo_manifest_path;
     let manifest_str = std::fs::read_to_string(manifest_path)
         .unwrap_or_else(|e| panic!("Could not open {}: {e}", manifest_path.display()));
@@ -337,6 +344,7 @@ fn get_romfs_path(config: &CTRConfig) -> PathBuf {
         toml::de::from_str(&manifest_str).expect("Could not parse Cargo manifest as TOML");
 
     // Find the romfs setting and compute the path
+    let mut is_default = false;
     let romfs_dir_setting = manifest_data
         .as_table()
         .and_then(|table| table.get("package"))
@@ -347,9 +355,13 @@ fn get_romfs_path(config: &CTRConfig) -> PathBuf {
         .and_then(toml::Value::as_table)
         .and_then(|table| table.get("romfs_dir"))
         .and_then(toml::Value::as_str)
-        .unwrap_or("romfs");
+        .unwrap_or_else(|| {
+            is_default = true;
+            "romfs"
+        });
     let mut romfs_path = manifest_path.clone();
     romfs_path.pop(); // Pop Cargo.toml
     romfs_path.push(romfs_dir_setting);
-    romfs_path
+
+    (romfs_path, is_default)
 }
