@@ -1,6 +1,7 @@
-use cargo_metadata::{MetadataCommand, Package};
+use cargo_metadata::{Message, MetadataCommand};
 use rustc_version::{Channel, Version};
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::{
     env, fmt, io,
     process::{self, Command, Stdio},
@@ -12,8 +13,18 @@ struct CTRConfig {
     author: String,
     description: String,
     icon: String,
-    target_path: String,
+    target_path: PathBuf,
     cargo_manifest_path: PathBuf,
+}
+
+impl CTRConfig {
+    fn path_3dsx(&self) -> PathBuf {
+        self.target_path.with_extension("3dsx")
+    }
+
+    fn path_smdh(&self) -> PathBuf {
+        self.target_path.with_extension("smdh")
+    }
 }
 
 #[derive(Ord, PartialOrd, PartialEq, Eq, Debug)]
@@ -56,49 +67,105 @@ fn main() {
         return;
     }
 
-    let optimization_level = if env::args().any(|arg| arg == "--release") {
-        String::from("release")
-    } else {
-        String::from("debug")
-    };
-
-    // Skip `cargo 3ds`
-    let mut args = env::args().skip(2);
-
     // Get the command and collect the remaining arguments
-    let command = args.next();
-    let args: Vec<String> = args.collect();
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-
-    let (command, must_link) = match command.as_deref() {
-        Some("link") => ("build", true),
-        Some(command) => (command, false),
-        None => {
-            print_usage(&mut io::stderr());
-            process::exit(2)
-        }
-    };
+    let cargo_command = CargoCommand::from_args().unwrap_or_else(|| {
+        print_usage(&mut io::stderr());
+        process::exit(2)
+    });
 
     eprintln!("Running Cargo");
-    build_elf(command, &args);
+    let (status, messages) = cargo_command.build_elf();
+    if !status.success() {
+        process::exit(status.code().unwrap_or(1));
+    }
 
-    if command != "build" && !must_link {
-        // We only do more work if it's a build or build + 3dslink operation
+    if !cargo_command.should_build_3dsx() {
         return;
     }
 
     eprintln!("Getting metadata");
-    let app_conf = get_metadata(&args, &optimization_level);
+    let app_conf = get_metadata(&messages);
 
-    eprintln!("Building smdh");
+    eprintln!("Building smdh:{}", app_conf.path_smdh().display());
     build_smdh(&app_conf);
 
-    eprintln!("Building 3dsx");
+    eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
     build_3dsx(&app_conf);
 
-    if must_link {
+    if cargo_command.should_link {
         eprintln!("Running 3dslink");
         link(&app_conf);
+    }
+}
+
+struct CargoCommand {
+    command: String,
+    should_link: bool,
+    args: Vec<String>,
+}
+
+impl CargoCommand {
+    fn from_args() -> Option<Self> {
+        // Skip `cargo 3ds`. `cargo-3ds` isn't supported for now
+        let mut args = env::args().skip(2);
+
+        let command = args.next()?;
+        let mut remaining_args: Vec<String> = args.collect();
+
+        let (command, should_link) = match command.as_str() {
+            "link" => ("build".to_string(), true),
+            "test" => {
+                let no_run = String::from("--no-run");
+
+                if remaining_args.contains(&no_run) {
+                    (command, false)
+                } else {
+                    remaining_args.push(no_run);
+                    (command, true)
+                }
+            }
+            _ => (command, false),
+        };
+
+        Some(Self {
+            command,
+            should_link,
+            args: remaining_args,
+        })
+    }
+
+    fn build_elf(&self) -> (ExitStatus, Vec<Message>) {
+        let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
+            + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
+
+        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+
+        let mut command = Command::new(cargo)
+            .arg(&self.command)
+            .arg("--message-format=json-render-diagnostics")
+            .arg("-Z")
+            .arg("build-std")
+            .arg("--target")
+            .arg("armv6k-nintendo-3ds")
+            .args(&self.args)
+            .env("RUSTFLAGS", rustflags)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+
+        let stdout_reader = std::io::BufReader::new(command.stdout.take().unwrap());
+
+        let messages = Message::parse_stream(stdout_reader)
+            .collect::<io::Result<Vec<Message>>>()
+            .unwrap();
+
+        (command.wait().unwrap(), messages)
+    }
+
+    fn should_build_3dsx(&self) -> bool {
+        matches!(self.command.as_str(), "build" | "link" | "test")
     }
 }
 
@@ -120,21 +187,27 @@ fn print_usage(f: &mut impl std::io::Write) {
         "{name}: {description}.
 
 Usage:
-    {invocation} build [--release] [CARGO_OPTS...]
-    {invocation} link [--release] [CARGO_OPTS...]
+    {invocation} build [CARGO_OPTS...]
+    {invocation} link [CARGO_OPTS...]
+    {invocation} test [CARGO_OPTS...]
     {invocation} <cargo-command> [CARGO_OPTS...]
     {invocation} -h | --help
 
 Commands:
     build           build a 3dsx executable.
     link            build a 3dsx executable and send it to a device with 3dslink.
+    test            build a 3dsx executable from unit/integration tests and send it to a device.
     <cargo-command> execute some other Cargo command with 3ds options configured (ex. check or clippy).
 
 Options:
     -h --help       Show this screen.
-    --release       Build in release mode.
 
-Additional arguments will be passed through to `cargo build`.
+Additional arguments will be passed through to `<cargo-command>`. Some that are supported include:
+
+    [build | link | test] --release
+    test --no-run
+
+Other flags may work, but haven't been tested.
 ",
         name = env!("CARGO_BIN_NAME"),
         description = env!("CARGO_PKG_DESCRIPTION"),
@@ -176,70 +249,32 @@ fn check_rust_version() {
     }
 }
 
-fn build_elf(command: &str, args: &[&str]) {
-    let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
-        + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
-
-    let mut process = Command::new("cargo")
-        .arg(command)
-        .arg("-Z")
-        .arg("build-std")
-        .arg("--target")
-        .arg("armv6k-nintendo-3ds")
-        .args(args)
-        .env("RUSTFLAGS", rustflags)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
-
-    let status = process.wait().unwrap();
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-}
-
-fn get_metadata(args: &[&str], opt_level: &str) -> CTRConfig {
+fn get_metadata(messages: &[Message]) -> CTRConfig {
     let metadata = MetadataCommand::new()
         .exec()
         .expect("Failed to get cargo metadata");
-    let target_dir = &metadata.target_directory;
 
-    let package: &Package;
-    let binary_name: String;
-    let target_path: String;
+    let mut package = None;
+    let mut artifact = None;
 
-    // Check if we compiled the crate or an example
-    if let Some(example_pos) = args.iter().position(|arg| *arg == "--example") {
-        let example_name = *args.get(example_pos + 1).expect("No example given");
+    // Extract the final built executable. We may want to fail in cases where
+    // multiple executables, or none, were built?
+    for message in messages.iter().rev() {
+        if let Message::CompilerArtifact(art) = message {
+            if art.executable.is_some() {
+                package = Some(metadata[&art.package_id].clone());
+                artifact = Some(art.clone());
 
-        // Find the example's package
-        package = metadata
-            .packages
-            .iter()
-            .find(|pkg| {
-                pkg.targets.iter().any(|target| {
-                    target.name == example_name && target.kind.iter().any(|kind| kind == "example")
-                })
-            })
-            .expect("Could not find package for example");
-
-        binary_name = format!("{} - {} example", example_name, package.name);
-        target_path = format!(
-            "{}/armv6k-nintendo-3ds/{}/examples/{}",
-            target_dir, opt_level, example_name
-        );
-    } else {
-        // Otherwise get the current/root crate
-        package = metadata.root_package().expect("No root crate found");
-        binary_name = package.name.clone();
-        target_path = format!(
-            "{}/armv6k-nintendo-3ds/{}/{}",
-            target_dir, opt_level, package.name
-        );
+                break;
+            }
+        }
     }
+    if package.is_none() || artifact.is_none() {
+        eprintln!("No executable found from build command output!");
+        process::exit(1);
+    }
+
+    let (package, artifact) = (package.unwrap(), artifact.unwrap());
 
     let mut icon = String::from("./icon.png");
 
@@ -250,16 +285,27 @@ fn get_metadata(args: &[&str], opt_level: &str) -> CTRConfig {
         );
     }
 
+    // for now assume a single "kind" since we only support one output artifact
+    let name = match artifact.target.kind[0].as_ref() {
+        "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
+            format!("{} tests", artifact.target.name)
+        }
+        "example" => {
+            format!("{} - {} example", artifact.target.name, package.name)
+        }
+        _ => artifact.target.name,
+    };
+
     CTRConfig {
-        name: binary_name,
+        name,
         author: package.authors[0].clone(),
         description: package
             .description
             .clone()
             .unwrap_or_else(|| String::from("Homebrew Application")),
         icon,
-        target_path,
-        cargo_manifest_path: package.manifest_path.clone().into(),
+        target_path: artifact.executable.unwrap().into(),
+        cargo_manifest_path: package.manifest_path.into(),
     }
 }
 
@@ -270,7 +316,7 @@ fn build_smdh(config: &CTRConfig) {
         .arg(&config.description)
         .arg(&config.author)
         .arg(&config.icon)
-        .arg(format!("{}.smdh", config.target_path))
+        .arg(config.path_smdh())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -287,15 +333,15 @@ fn build_smdh(config: &CTRConfig) {
 fn build_3dsx(config: &CTRConfig) {
     let mut command = Command::new("3dsxtool");
     let mut process = command
-        .arg(format!("{}.elf", config.target_path))
-        .arg(format!("{}.3dsx", config.target_path))
-        .arg(format!("--smdh={}.smdh", config.target_path));
+        .arg(&config.target_path)
+        .arg(config.path_3dsx())
+        .arg(format!("--smdh={}", config.path_smdh().to_string_lossy()));
 
     // If romfs directory exists, automatically include it
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
         println!("Adding RomFS from {}", romfs_path.display());
-        process = process.arg(format!("--romfs={}", romfs_path.display()));
+        process = process.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
     } else if !is_default_romfs {
         eprintln!(
             "Could not find configured RomFS dir: {}",
@@ -320,7 +366,7 @@ fn build_3dsx(config: &CTRConfig) {
 
 fn link(config: &CTRConfig) {
     let mut process = Command::new("3dslink")
-        .arg(format!("{}.3dsx", config.target_path))
+        .arg(config.path_3dsx())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -334,7 +380,7 @@ fn link(config: &CTRConfig) {
     }
 }
 
-/// Read the RomFS path from the Cargo manifest. If it's unset, use the default.
+/// Read the `RomFS` path from the Cargo manifest. If it's unset, use the default.
 /// The returned boolean is true when the default is used.
 fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
     let manifest_path = &config.cargo_manifest_path;
