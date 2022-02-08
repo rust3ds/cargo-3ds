@@ -113,7 +113,7 @@ impl CargoCommand {
         let mut remaining_args: Vec<String> = args.collect();
 
         let (command, should_link) = match command.as_str() {
-            "link" => ("build".to_string(), true),
+            "run" => ("build".to_string(), true),
             "test" => {
                 let no_run = String::from("--no-run");
 
@@ -165,7 +165,7 @@ impl CargoCommand {
     }
 
     fn should_build_3dsx(&self) -> bool {
-        matches!(self.command.as_str(), "build" | "link" | "test")
+        matches!(self.command.as_str(), "build" | "run" | "test")
     }
 }
 
@@ -188,14 +188,14 @@ fn print_usage(f: &mut impl std::io::Write) {
 
 Usage:
     {invocation} build [CARGO_OPTS...]
-    {invocation} link [CARGO_OPTS...]
+    {invocation} run [CARGO_OPTS...]
     {invocation} test [CARGO_OPTS...]
     {invocation} <cargo-command> [CARGO_OPTS...]
     {invocation} -h | --help
 
 Commands:
     build           build a 3dsx executable.
-    link            build a 3dsx executable and send it to a device with 3dslink.
+    run             build a 3dsx executable and send it to a device with 3dslink.
     test            build a 3dsx executable from unit/integration tests and send it to a device.
     <cargo-command> execute some other Cargo command with 3ds options configured (ex. check or clippy).
 
@@ -204,7 +204,7 @@ Options:
 
 Additional arguments will be passed through to `<cargo-command>`. Some that are supported include:
 
-    [build | link | test] --release
+    [build | run | test] --release
     test --no-run
 
 Other flags may work, but haven't been tested.
