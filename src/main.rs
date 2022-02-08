@@ -188,22 +188,22 @@ fn print_usage(f: &mut impl std::io::Write) {
         "{name}: {description}.
 
 Usage:
-    {invocation} build [--release] [CARGO_OPTS...]
-    {invocation} link [--release] [CARGO_OPTS...]
-    {invocation} test [--release] [CARGO_OPTS...]
+    {invocation} build [CARGO_OPTS...]
+    {invocation} link [CARGO_OPTS...]
+    {invocation} test [CARGO_OPTS...]
     {invocation} <cargo-command> [CARGO_OPTS...]
     {invocation} -h | --help
 
 Commands:
     build           build a 3dsx executable.
     link            build a 3dsx executable and send it to a device with 3dslink.
+    test            build a 3dsx executable from unit/integration tests and send it to a device.
     <cargo-command> execute some other Cargo command with 3ds options configured (ex. check or clippy).
 
 Options:
     -h --help       Show this screen.
-    --release       Build in release mode.
 
-Additional arguments will be passed through to `cargo build`.
+Additional arguments will be passed through to `<cargo-command>`.
 ",
         name = env!("CARGO_BIN_NAME"),
         description = env!("CARGO_PKG_DESCRIPTION"),
