@@ -87,7 +87,7 @@ fn main() {
     eprintln!("Getting metadata");
     let app_conf = get_metadata(&messages);
 
-    eprintln!("Building smdh {:?}", app_conf.path_3dsx());
+    eprintln!("Building smdh {:?}", app_conf.path_smdh());
     build_smdh(&app_conf);
 
     eprintln!("Building 3dsx {:?}", app_conf.path_3dsx());
@@ -114,18 +114,18 @@ impl CargoCommand {
         let mut remaining_args: Vec<String> = args.collect();
 
         let (command, should_link) = match command.as_str() {
-            "link" => ("build".into(), true),
+            "link" => ("build".to_string(), true),
             "test" => {
                 let no_run = String::from("--no-run");
-                let should_link = if remaining_args.contains(&no_run) {
-                    false
+
+                if remaining_args.contains(&no_run) {
+                    (command, false)
                 } else {
                     remaining_args.push(no_run);
-                    true
-                };
-                ("test".into(), should_link)
+                    (command, true)
+                }
             }
-            command => (command.into(), false),
+            _ => (command, false),
         };
 
         Some(Self {
@@ -139,7 +139,7 @@ impl CargoCommand {
         let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
             + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
 
-        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
         let mut command = Command::new(cargo)
             .arg(&self.command)
@@ -203,7 +203,12 @@ Commands:
 Options:
     -h --help       Show this screen.
 
-Additional arguments will be passed through to `<cargo-command>`.
+Additional arguments will be passed through to `<cargo-command>`. Some that are supported include:
+
+    [build | link | test] --release
+    test --no-run
+
+Other flags may work, but haven't been tested.
 ",
         name = env!("CARGO_BIN_NAME"),
         description = env!("CARGO_PKG_DESCRIPTION"),
@@ -281,10 +286,19 @@ fn get_metadata(messages: &[Message]) -> CTRConfig {
         );
     }
 
+    // for now assume a single "kind" since we only support one output artifact
+    let name = match artifact.target.kind[0].as_ref() {
+        "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
+            format!("{} tests", artifact.target.name)
+        }
+        "example" => {
+            format!("{} - {} example", artifact.target.name, package.name)
+        }
+        _ => artifact.target.name,
+    };
+
     CTRConfig {
-        // TODO: should we add `-test` or something if it's a lib/bin test?
-        // We can probably glean some info from `artifact.target.kind`
-        name: artifact.target.name,
+        name,
         author: package.authors[0].clone(),
         description: package
             .description
@@ -292,7 +306,7 @@ fn get_metadata(messages: &[Message]) -> CTRConfig {
             .unwrap_or_else(|| String::from("Homebrew Application")),
         icon,
         target_path: artifact.executable.unwrap().into(),
-        cargo_manifest_path: package.manifest_path.clone().into(),
+        cargo_manifest_path: package.manifest_path.into(),
     }
 }
 
