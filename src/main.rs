@@ -1,6 +1,5 @@
 use cargo_metadata::{Message, MetadataCommand};
 use rustc_version::{Channel, Version};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::{
@@ -19,12 +18,12 @@ struct CTRConfig {
 }
 
 impl CTRConfig {
-    fn path_3dsx(&self) -> OsString {
-        self.target_path.with_extension("3dsx").into()
+    fn path_3dsx(&self) -> PathBuf {
+        self.target_path.with_extension("3dsx")
     }
 
-    fn path_smdh(&self) -> OsString {
-        self.target_path.with_extension("smdh").into()
+    fn path_smdh(&self) -> PathBuf {
+        self.target_path.with_extension("smdh")
     }
 }
 
@@ -87,10 +86,10 @@ fn main() {
     eprintln!("Getting metadata");
     let app_conf = get_metadata(&messages);
 
-    eprintln!("Building smdh {:?}", app_conf.path_smdh());
+    eprintln!("Building smdh:{}", app_conf.path_smdh().display());
     build_smdh(&app_conf);
 
-    eprintln!("Building 3dsx {:?}", app_conf.path_3dsx());
+    eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
     build_3dsx(&app_conf);
 
     if cargo_command.should_link {
@@ -342,7 +341,7 @@ fn build_3dsx(config: &CTRConfig) {
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
         println!("Adding RomFS from {}", romfs_path.display());
-        process = process.arg(format!("--romfs={}", romfs_path.display()));
+        process = process.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
     } else if !is_default_romfs {
         eprintln!(
             "Could not find configured RomFS dir: {}",
@@ -381,7 +380,7 @@ fn link(config: &CTRConfig) {
     }
 }
 
-/// Read the RomFS path from the Cargo manifest. If it's unset, use the default.
+/// Read the `RomFS` path from the Cargo manifest. If it's unset, use the default.
 /// The returned boolean is true when the default is used.
 fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
     let manifest_path = &config.cargo_manifest_path;
