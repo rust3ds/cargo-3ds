@@ -77,7 +77,7 @@ fn main() {
     eprintln!("Running Cargo");
     let (status, messages) = cargo_command.build_elf();
     if !status.success() {
-        process::exit(1);
+        process::exit(status.code().unwrap_or(1));
     }
 
     if !cargo_command.should_build_3dsx() {
