@@ -1,5 +1,6 @@
 use cargo_metadata::{Message, MetadataCommand};
 use rustc_version::{Channel, Version};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::{
@@ -18,12 +19,12 @@ struct CTRConfig {
 }
 
 impl CTRConfig {
-    fn path_3dsx(&self) -> PathBuf {
-        self.target_path.with_extension("3dsx")
+    fn path_3dsx(&self) -> OsString {
+        self.target_path.with_extension("3dsx").into()
     }
 
-    fn path_smdh(&self) -> PathBuf {
-        self.target_path.with_extension("smdh")
+    fn path_smdh(&self) -> OsString {
+        self.target_path.with_extension("smdh").into()
     }
 }
 
@@ -86,10 +87,10 @@ fn main() {
     eprintln!("Getting metadata");
     let app_conf = get_metadata(&messages);
 
-    eprintln!("Building smdh");
+    eprintln!("Building smdh {:?}", app_conf.path_3dsx());
     build_smdh(&app_conf);
 
-    eprintln!("Building 3dsx");
+    eprintln!("Building 3dsx {:?}", app_conf.path_3dsx());
     build_3dsx(&app_conf);
 
     if cargo_command.should_link {
@@ -302,7 +303,7 @@ fn build_smdh(config: &CTRConfig) {
         .arg(&config.description)
         .arg(&config.author)
         .arg(&config.icon)
-        .arg(&config.path_smdh())
+        .arg(config.path_smdh())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -320,8 +321,8 @@ fn build_3dsx(config: &CTRConfig) {
     let mut command = Command::new("3dsxtool");
     let mut process = command
         .arg(&config.target_path)
-        .arg(&config.path_3dsx())
-        .arg(format!("--smdh={}", config.path_3dsx().to_str().unwrap()));
+        .arg(config.path_3dsx())
+        .arg(format!("--smdh={}", config.path_smdh().to_string_lossy()));
 
     // If romfs directory exists, automatically include it
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
