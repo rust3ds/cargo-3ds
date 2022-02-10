@@ -10,6 +10,6 @@ The commands are the same as cargo ("run" also uses 3dslink, so you can directly
 `cargo +nightly 3ds build` \
 `cargo +nightly 3ds run --release`
 
-You can pass or not `--release` to build with debug symbols or not, and this works for both `build` and `link`.
+You can pass or not `--release` to build with debug symbols or not, and this works for both `build` and `run`.
 
-Any other parameters you pass after the command (being it `build` or `link`) will be passed during the compiling stage to `cargo`.
+Any other parameters you pass after the command will be passed during the compiling stage to `cargo`.
