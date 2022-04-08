@@ -140,9 +140,25 @@ impl CargoCommand {
 
         let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
-        let mut command = Command::new(cargo)
-            .arg(&self.command)
-            .arg("--message-format=json-render-diagnostics")
+        let has_message_format = self
+            .args
+            .iter()
+            .any(|arg| arg.starts_with("--message-format"));
+
+        let mut command = Command::new(cargo);
+        command.arg(&self.command);
+
+        if has_message_format {
+            // The user presumably cares about the message format, so we should
+            // print to stdout like usual.
+            command.stdout(Stdio::inherit())
+        } else {
+            command
+                .stdout(Stdio::piped())
+                .arg("--message-format=json-render-diagnostics")
+        };
+
+        let mut command = command
             .arg("-Z")
             .arg("build-std")
             .arg("--target")
@@ -150,16 +166,22 @@ impl CargoCommand {
             .args(&self.args)
             .env("RUSTFLAGS", rustflags)
             .stdin(Stdio::inherit())
-            .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
 
-        let stdout_reader = std::io::BufReader::new(command.stdout.take().unwrap());
-
-        let messages = Message::parse_stream(stdout_reader)
-            .collect::<io::Result<Vec<Message>>>()
-            .unwrap();
+        let messages = if has_message_format {
+            // if the user specified message format, we can't parse the messages
+            // for anything since we wrote them all to stdout.
+            // TODO: should we exit early in this case? We can't get the
+            // metadata about the built artifacts or anything in this case.
+            Vec::new()
+        } else {
+            let stdout_reader = std::io::BufReader::new(command.stdout.take().unwrap());
+            Message::parse_stream(stdout_reader)
+                .collect::<io::Result<Vec<Message>>>()
+                .unwrap()
+        };
 
         (command.wait().unwrap(), messages)
     }
