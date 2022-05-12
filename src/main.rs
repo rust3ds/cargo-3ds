@@ -1,11 +1,13 @@
 use cargo_metadata::{Message, MetadataCommand};
 use rustc_version::{Channel, Version};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::{
     env, fmt, io,
     process::{self, Command, Stdio},
 };
+use tee::TeeReader;
 
 #[derive(serde_derive::Deserialize, Default)]
 struct CTRConfig {
@@ -102,9 +104,12 @@ struct CargoCommand {
     command: String,
     should_link: bool,
     args: Vec<String>,
+    message_format: String,
 }
 
 impl CargoCommand {
+    const DEFAULT_MESSAGE_FORMAT: &'static str = "json-render-diagnostics";
+
     fn from_args() -> Option<Self> {
         // Skip `cargo 3ds`. `cargo-3ds` isn't supported for now
         let mut args = env::args().skip(2);
@@ -127,11 +132,41 @@ impl CargoCommand {
             _ => (command, false),
         };
 
+        let message_format = match Self::extract_message_format(&mut remaining_args) {
+            Some(format) => {
+                if !format.starts_with("json") {
+                    eprintln!("error: non-JSON `message-format` is not supported");
+                    std::process::exit(1);
+                }
+                format
+            }
+            None => Self::DEFAULT_MESSAGE_FORMAT.to_string(),
+        };
+
         Some(Self {
             command,
             should_link,
             args: remaining_args,
+            message_format,
         })
+    }
+
+    fn extract_message_format(args: &mut Vec<String>) -> Option<String> {
+        for (i, arg) in args.iter().enumerate() {
+            if arg.starts_with("--message-format") {
+                return {
+                    let arg = args.remove(i);
+
+                    if let Some((_, format)) = arg.split_once('=') {
+                        Some(format.to_string())
+                    } else {
+                        Some(args.remove(i))
+                    }
+                };
+            }
+        }
+
+        None
     }
 
     fn build_elf(&self) -> (ExitStatus, Vec<Message>) {
@@ -140,48 +175,41 @@ impl CargoCommand {
 
         let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
-        let has_message_format = self
-            .args
-            .iter()
-            .any(|arg| arg.starts_with("--message-format"));
-
-        let mut command = Command::new(cargo);
-        command.arg(&self.command);
-
-        if has_message_format {
-            // The user presumably cares about the message format, so we should
-            // print to stdout like usual.
-            command.stdout(Stdio::inherit())
-        } else {
-            command
-                .stdout(Stdio::piped())
-                .arg("--message-format=json-render-diagnostics")
-        };
-
-        let mut command = command
+        let mut command = Command::new(cargo)
+            .env("RUSTFLAGS", rustflags)
+            .arg(&self.command)
             .arg("-Z")
             .arg("build-std")
             .arg("--target")
             .arg("armv6k-nintendo-3ds")
+            .arg("--message-format")
+            .arg(&self.message_format)
             .args(&self.args)
-            .env("RUSTFLAGS", rustflags)
+            .stdout(Stdio::piped())
             .stdin(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
 
-        let messages = if has_message_format {
-            // if the user specified message format, we can't parse the messages
-            // for anything since we wrote them all to stdout.
-            // TODO: should we exit early in this case? We can't get the
-            // metadata about the built artifacts or anything in this case.
-            Vec::new()
+        let command_stdout = command.stdout.take().unwrap();
+
+        let mut tee_reader;
+        let mut stdout_reader;
+
+        let buf_reader: &mut dyn BufRead = if self.message_format == Self::DEFAULT_MESSAGE_FORMAT {
+            stdout_reader = BufReader::new(command_stdout);
+            &mut stdout_reader
         } else {
-            let stdout_reader = std::io::BufReader::new(command.stdout.take().unwrap());
-            Message::parse_stream(stdout_reader)
-                .collect::<io::Result<Vec<Message>>>()
-                .unwrap()
+            // The user presumably cares about the message format, so we should
+            // copy stuff to stdout like they expect. We can still extract the executable
+            // information out of it that we need for 3dsxtool etc.
+            tee_reader = BufReader::new(TeeReader::new(command_stdout, io::stdout()));
+            &mut tee_reader
         };
+
+        let messages = Message::parse_stream(buf_reader)
+            .collect::<io::Result<_>>()
+            .unwrap();
 
         (command.wait().unwrap(), messages)
     }
@@ -242,8 +270,8 @@ fn check_rust_version() {
     let rustc_version = rustc_version::version_meta().unwrap();
 
     if rustc_version.channel > Channel::Nightly {
-        println!("cargo-3ds requires a nightly rustc version.");
-        println!(
+        eprintln!("cargo-3ds requires a nightly rustc version.");
+        eprintln!(
             "Please run `rustup override set nightly` to use nightly in the \
             current directory."
         );
@@ -261,11 +289,11 @@ fn check_rust_version() {
     };
 
     if old_version || old_commit {
-        println!(
+        eprintln!(
             "cargo-3ds requires rustc nightly version >= {}",
             MINIMUM_COMMIT_DATE,
         );
-        println!("Please run `rustup update nightly` to upgrade your nightly version");
+        eprintln!("Please run `rustup update nightly` to upgrade your nightly version");
 
         process::exit(1);
     }
@@ -362,7 +390,7 @@ fn build_3dsx(config: &CTRConfig) {
     // If romfs directory exists, automatically include it
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
-        println!("Adding RomFS from {}", romfs_path.display());
+        eprintln!("Adding RomFS from {}", romfs_path.display());
         process = process.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
     } else if !is_default_romfs {
         eprintln!(
