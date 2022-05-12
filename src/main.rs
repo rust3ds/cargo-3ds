@@ -296,9 +296,14 @@ fn get_metadata(messages: &[Message]) -> CTRConfig {
         _ => artifact.target.name,
     };
 
+    let author = match package.authors.as_slice() {
+        [name, ..] => name.to_owned(),
+        [] => String::from("Unspecified Author"), // as standard with the devkitPRO toolchain
+    };
+
     CTRConfig {
         name,
-        author: package.authors[0].clone(),
+        author,
         description: package
             .description
             .clone()
