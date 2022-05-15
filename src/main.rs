@@ -136,7 +136,7 @@ impl CargoCommand {
             Some(format) => {
                 if !format.starts_with("json") {
                     eprintln!("error: non-JSON `message-format` is not supported");
-                    std::process::exit(1);
+                    process::exit(1);
                 }
                 format
             }
@@ -170,28 +170,9 @@ impl CargoCommand {
     }
 
     fn build_elf(&self) -> (ExitStatus, Vec<Message>) {
-        let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
-            + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
-
-        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-
-        let mut command = Command::new(cargo)
-            .env("RUSTFLAGS", rustflags)
-            .arg(&self.command)
-            .arg("-Z")
-            .arg("build-std")
-            .arg("--target")
-            .arg("armv6k-nintendo-3ds")
-            .arg("--message-format")
-            .arg(&self.message_format)
-            .args(&self.args)
-            .stdout(Stdio::piped())
-            .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-
-        let command_stdout = command.stdout.take().unwrap();
+        let mut command = self.make_cargo_build_command();
+        let mut process = command.spawn().unwrap();
+        let command_stdout = process.stdout.take().unwrap();
 
         let mut tee_reader;
         let mut stdout_reader;
@@ -211,7 +192,55 @@ impl CargoCommand {
             .collect::<io::Result<_>>()
             .unwrap();
 
-        (command.wait().unwrap(), messages)
+        (process.wait().unwrap(), messages)
+    }
+
+    /// Create the cargo build command, but don't execute it.
+    /// If there is no pre-built std detected in the sysroot, `build-std` is used.
+    fn make_cargo_build_command(&self) -> Command {
+        let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
+            + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
+        let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let sysroot = Self::find_sysroot();
+        let mut command = Command::new(cargo);
+
+        if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
+            eprintln!("No pre-built std found, using build-std");
+            command.arg("-Z").arg("build-std");
+        }
+
+        command
+            .env("RUSTFLAGS", rustflags)
+            .arg(&self.command)
+            .arg("--target")
+            .arg("armv6k-nintendo-3ds")
+            .arg("--message-format")
+            .arg(&self.message_format)
+            .args(&self.args)
+            .stdout(Stdio::piped())
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        command
+    }
+
+    /// Get the compiler's sysroot path
+    fn find_sysroot() -> PathBuf {
+        let sysroot = env::var("SYSROOT").ok().unwrap_or_else(|| {
+            // Get sysroot from rustc
+            let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+
+            let output = Command::new(&rustc)
+                .arg("--print")
+                .arg("sysroot")
+                .output()
+                .unwrap_or_else(|_| panic!("Failed to run `{rustc} --print sysroot`"));
+
+            String::from_utf8(output.stdout)
+                .expect("Failed to parse sysroot path into a UTF-8 string")
+        });
+
+        PathBuf::from(sysroot.trim())
     }
 
     fn should_build_3dsx(&self) -> bool {
@@ -219,9 +248,9 @@ impl CargoCommand {
     }
 }
 
-fn print_usage(f: &mut impl std::io::Write) {
+fn print_usage(f: &mut impl io::Write) {
     let invocation = {
-        let mut args = std::env::args();
+        let mut args = env::args();
 
         // We do this to properly display `cargo-3ds` if invoked that way
         let bin = args.next().unwrap();
