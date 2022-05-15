@@ -5,7 +5,7 @@ description = "Cargo wrapper for developing Rust-based Nintendo 3DS homebrew app
 repository = "https://github.com/Meziu/cargo-3ds"
 license = "MIT"
 authors = ["Andrea Ciliberti <meziu210@icloud.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 cargo_metadata = "0.14.0"
