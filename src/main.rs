@@ -55,11 +55,11 @@ impl fmt::Display for CommitDate {
 }
 
 const MINIMUM_COMMIT_DATE: CommitDate = CommitDate {
-    year: 2021,
-    month: 10,
-    day: 1,
+    year: 2022,
+    month: 6,
+    day: 15,
 };
-const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 56, 0);
+const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 63, 0);
 
 fn main() {
     check_rust_version();
@@ -307,8 +307,12 @@ fn check_rust_version() {
         process::exit(1);
     }
 
-    let old_version: bool = MINIMUM_RUSTC_VERSION > rustc_version.semver;
-
+    let old_version = MINIMUM_RUSTC_VERSION > Version {
+        // Remove `-nightly` pre-release tag for comparison.
+        pre: semver::Prerelease::EMPTY,
+        ..rustc_version.semver.clone()
+    };
+    
     let old_commit = match rustc_version.commit_date {
         None => false,
         Some(date) => {
