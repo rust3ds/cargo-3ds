@@ -199,7 +199,7 @@ impl CargoCommand {
     /// If there is no pre-built std detected in the sysroot, `build-std` is used.
     fn make_cargo_build_command(&self) -> Command {
         let rustflags = env::var("RUSTFLAGS").unwrap_or_default()
-            + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").unwrap());
+            + &format!(" -L{}/libctru/lib -lctru", env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable"));
         let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
         let sysroot = Self::find_sysroot();
         let mut command = Command::new(cargo);
@@ -409,7 +409,7 @@ fn build_smdh(config: &CTRConfig) {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .unwrap();
+        .expect("smdhtool command failed, most likely due to 'smdhtool' not being in $PATH");
 
     let status = process.wait().unwrap();
 
@@ -443,7 +443,7 @@ fn build_3dsx(config: &CTRConfig) {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .unwrap();
+        .expect("3dsxtool command failed, most likely due to '3dsxtool' not being in $PATH");
 
     let status = process.wait().unwrap();
 
