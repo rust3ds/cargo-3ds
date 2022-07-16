@@ -1,14 +1,14 @@
-use clap::{ArgEnum, Parser};
+use clap::{ValueEnum, Parser};
 use std::fmt::{Display, Formatter};
 
 #[derive(Parser)]
 pub struct Input {
-    #[clap(arg_enum)]
+    #[clap(value_enum)]
     pub cmd: CargoCommand,
     pub cargo_opts: Vec<String>,
 }
 
-#[derive(ArgEnum, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(ValueEnum, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum CargoCommand {
     Build,
     Run,
