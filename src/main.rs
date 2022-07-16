@@ -22,17 +22,12 @@ fn main() {
         .iter()
         .position(|s| s.starts_with("--message-format"))
     {
-        input.cargo_opts.remove(pos);
-        let format = if let Some((_, format)) = input
-            .cargo_opts
-            .get(pos)
-            .unwrap()
-            .to_string()
-            .split_once('=')
+        let arg = input.cargo_opts.remove(pos);
+        let format = if let Some((_, format)) = arg.split_once('=')
         {
             format.to_string()
         } else {
-            input.cargo_opts.remove(pos).to_string()
+            arg.to_string()
         };
         if !format.starts_with("json") {
             eprintln!("error: non-JSON `message-format` is not supported");
