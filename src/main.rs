@@ -27,7 +27,7 @@ fn main() {
         {
             format.to_string()
         } else {
-            arg.to_string()
+            input.cargo_opts.remove(pos).to_string()
         };
         if !format.starts_with("json") {
             eprintln!("error: non-JSON `message-format` is not supported");
