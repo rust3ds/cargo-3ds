@@ -1,7 +1,8 @@
-use clap::{ValueEnum, Parser};
+use clap::{ValueEnum, Parser, AppSettings};
 use std::fmt::{Display, Formatter};
 
 #[derive(Parser)]
+#[clap(global_setting(AppSettings::AllowLeadingHyphen))]
 pub struct Input {
     #[clap(value_enum)]
     pub cmd: CargoCommand,

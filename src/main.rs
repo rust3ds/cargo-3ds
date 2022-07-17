@@ -1,6 +1,6 @@
 use cargo_3ds::commands::{CargoCommand, Input};
 use cargo_3ds::{build_3dsx, build_elf, build_smdh, check_rust_version, get_metadata, link};
-use clap::Parser;
+use clap::{Parser};
 use std::process;
 
 fn main() {
@@ -17,8 +17,7 @@ fn main() {
                 true
             });
 
-    let message_format = if let Some(pos) = input
-        .cargo_opts
+    let message_format = if let Some(pos) = input.cargo_opts
         .iter()
         .position(|s| s.starts_with("--message-format"))
     {

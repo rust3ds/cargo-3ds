@@ -59,6 +59,8 @@ fn make_cargo_build_command(
         command.arg("-Z").arg("build-std");
     }
 
+    println!("{:?}", args);
+
     command
         .env("RUSTFLAGS", rust_flags)
         .arg(&cmd.to_string())
