@@ -24,17 +24,17 @@ fn main() {
         return;
     }
 
-    println!("Getting metadata");
+    eprintln!("Getting metadata");
     let app_conf = get_metadata(&messages);
 
-    println!("Building smdh:{}", app_conf.path_smdh().display());
+    eprintln!("Building smdh:{}", app_conf.path_smdh().display());
     build_smdh(&app_conf);
 
-    println!("Building 3dsx: {}", app_conf.path_3dsx().display());
+    eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
     build_3dsx(&app_conf);
 
     if should_link {
-        println!("Running 3dslink");
+        eprintln!("Running 3dslink");
         link(&app_conf);
     }
 }

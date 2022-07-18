@@ -292,7 +292,7 @@ pub fn build_3dsx(config: &CTRConfig) {
     // If romfs directory exists, automatically include it
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
-        println!("Adding RomFS from {}", romfs_path.display());
+        eprintln!("Adding RomFS from {}", romfs_path.display());
         process = process.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
     } else if !is_default_romfs {
         eprintln!(
