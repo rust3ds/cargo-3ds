@@ -16,7 +16,11 @@ use tee::TeeReader;
 
 const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
 
+/// Gets whether the executable should link the generated files to a 3ds
+/// based on the parsed input.
 pub fn get_should_link(input: &mut Input) -> bool {
+    // When running compile only commands, don't link the executable to the 3ds.
+    // Otherwise, link and run on the 3ds but do not run locally.
     input.cmd == CargoCommand::Build
         || (input.cmd == CargoCommand::Test
             && if input.cargo_opts.contains(&"--no-run".to_string()) {
@@ -27,18 +31,28 @@ pub fn get_should_link(input: &mut Input) -> bool {
             })
 }
 
+/// Extracts the user-defined message format and if there is none,
+/// default to `json-render-diagnostics`.
 pub fn get_message_format(input: &mut Input) -> String {
+    // Checks for a position within the args where '--message-format' is located
     if let Some(pos) = input
         .cargo_opts
         .iter()
         .position(|s| s.starts_with("--message-format"))
     {
+        // Remove the arg from list
         let arg = input.cargo_opts.remove(pos);
+
+        // Allows for usage of '--message-format=<format>' and also using space separation.
+        // Check for a '=' delimiter and use the second half of the split as the format,
+        // otherwise remove next arg which is now at the same position as the original flag.
         let format = if let Some((_, format)) = arg.split_once('=') {
             format.to_string()
         } else {
             input.cargo_opts.remove(pos)
         };
+
+        // Non-json formats are not supported so the executable exits.
         if !format.starts_with("json") {
             eprintln!("error: non-JSON `message-format` is not supported");
             process::exit(1);
@@ -46,10 +60,14 @@ pub fn get_message_format(input: &mut Input) -> String {
             format
         }
     } else {
+        // Default to 'json-render-diagnostics'
         DEFAULT_MESSAGE_FORMAT.to_string()
     }
 }
 
+/// Build the elf that will be used to create other 3ds files.
+/// The command built from [`make_cargo_build_command`] is executed
+/// and the messages from the spawned process are parsed and returned.
 pub fn build_elf(
     cmd: CargoCommand,
     message_format: &str,
@@ -79,7 +97,9 @@ pub fn build_elf(
     (process.wait().unwrap(), messages)
 }
 
-fn make_cargo_build_command(
+/// Create the cargo build command, but don't execute it.
+/// If there is no pre-built std detected in the sysroot, `build-std` is used.
+pub fn make_cargo_build_command(
     cmd: CargoCommand,
     message_format: &str,
     args: &Vec<String>,
@@ -113,7 +133,8 @@ fn make_cargo_build_command(
     command
 }
 
-fn find_sysroot() -> PathBuf {
+/// Finds the sysroot path of the current toolchain
+pub fn find_sysroot() -> PathBuf {
     let sysroot = env::var("SYSROOT").ok().unwrap_or_else(|| {
         let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
 
@@ -128,6 +149,8 @@ fn find_sysroot() -> PathBuf {
     PathBuf::from(sysroot.trim())
 }
 
+/// Checks the current rust version and channel.
+/// Exits if the minimum requirement is not met.
 pub fn check_rust_version() {
     let rustc_version = rustc_version::version_meta().unwrap();
 
@@ -166,6 +189,9 @@ pub fn check_rust_version() {
     }
 }
 
+/// Parses messages returned by the executed cargo command from [`build_elf`].
+/// The returned [`CTRConfig`] is then used for further building in and execution
+/// in [`build_smdh`], ['build_3dsx'], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     let metadata = MetadataCommand::new()
         .exec()
@@ -231,6 +257,8 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     }
 }
 
+/// Builds the smdh using `smdhtool`.
+/// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
 pub fn build_smdh(config: &CTRConfig) {
     let mut process = Command::new("smdhtool")
         .arg("--create")
@@ -252,6 +280,8 @@ pub fn build_smdh(config: &CTRConfig) {
     }
 }
 
+/// Builds the 3dsx using `3dsxtool`.
+/// This will fail if `3dsxtool` is not within the running directory or in a directory found in $PATH
 pub fn build_3dsx(config: &CTRConfig) {
     let mut command = Command::new("3dsxtool");
     let mut process = command
@@ -286,6 +316,8 @@ pub fn build_3dsx(config: &CTRConfig) {
     }
 }
 
+/// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
+/// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
 pub fn link(config: &CTRConfig) {
     let mut process = Command::new("3dslink")
         .arg(config.path_3dsx())
