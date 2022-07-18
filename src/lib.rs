@@ -2,7 +2,7 @@ extern crate core;
 
 pub mod commands;
 
-use crate::commands::CargoCommand;
+use crate::commands::{CargoCommand, Input};
 use cargo_metadata::{Message, MetadataCommand};
 use core::fmt;
 use rustc_version::Channel;
@@ -13,6 +13,42 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, io, process};
 use tee::TeeReader;
+
+const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
+
+pub fn get_should_link(input: &mut Input) -> bool {
+    input.cmd == CargoCommand::Build
+        || (input.cmd == CargoCommand::Test
+            && if input.cargo_opts.contains(&"--no-run".to_string()) {
+                false
+            } else {
+                input.cargo_opts.push("--no-run".to_string());
+                true
+            })
+}
+
+pub fn get_message_format(input: &mut Input) -> String {
+    if let Some(pos) = input
+        .cargo_opts
+        .iter()
+        .position(|s| s.starts_with("--message-format"))
+    {
+        let arg = input.cargo_opts.remove(pos);
+        let format = if let Some((_, format)) = arg.split_once('=') {
+            format.to_string()
+        } else {
+            input.cargo_opts.remove(pos)
+        };
+        if !format.starts_with("json") {
+            eprintln!("error: non-JSON `message-format` is not supported");
+            process::exit(1);
+        } else {
+            format
+        }
+    } else {
+        DEFAULT_MESSAGE_FORMAT.to_string()
+    }
+}
 
 pub fn build_elf(
     cmd: CargoCommand,
@@ -25,7 +61,7 @@ pub fn build_elf(
 
     let mut tee_reader;
     let mut stdout_reader;
-    let buf_reader: &mut dyn BufRead = if message_format == "json-render-diagnostics" {
+    let buf_reader: &mut dyn BufRead = if message_format == DEFAULT_MESSAGE_FORMAT {
         stdout_reader = BufReader::new(command_stdout);
         &mut stdout_reader
     } else {
