@@ -1,12 +1,12 @@
-use cargo_3ds::commands::{CargoCommand, Input};
+use cargo_3ds::commands::{Cargo, CargoCommand};
 use cargo_3ds::{build_3dsx, build_elf, build_smdh, check_rust_version, get_metadata, link};
-use clap::{Parser};
+use clap::Parser;
 use std::process;
 
 fn main() {
     check_rust_version();
 
-    let mut input: Input = Input::parse();
+    let Cargo::Input(mut input) = Cargo::parse();
 
     let should_link = input.cmd == CargoCommand::Build
         || (input.cmd == CargoCommand::Test
@@ -17,16 +17,16 @@ fn main() {
                 true
             });
 
-    let message_format = if let Some(pos) = input.cargo_opts
+    let message_format = if let Some(pos) = input
+        .cargo_opts
         .iter()
         .position(|s| s.starts_with("--message-format"))
     {
         let arg = input.cargo_opts.remove(pos);
-        let format = if let Some((_, format)) = arg.split_once('=')
-        {
+        let format = if let Some((_, format)) = arg.split_once('=') {
             format.to_string()
         } else {
-            input.cargo_opts.remove(pos).to_string()
+            input.cargo_opts.remove(pos)
         };
         if !format.starts_with("json") {
             eprintln!("error: non-JSON `message-format` is not supported");

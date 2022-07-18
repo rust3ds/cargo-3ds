@@ -29,6 +29,9 @@ pub fn build_elf(
         stdout_reader = BufReader::new(command_stdout);
         &mut stdout_reader
     } else {
+        // The user presumably cares about the message format, so we should
+        // copy stuff to stdout like they expect. We can still extract the executable
+        // information out of it that we need for 3dsxtool etc.
         tee_reader = BufReader::new(TeeReader::new(command_stdout, io::stdout()));
         &mut tee_reader
     };
@@ -58,8 +61,6 @@ fn make_cargo_build_command(
         eprintln!("No pre-build std found, using build-std");
         command.arg("-Z").arg("build-std");
     }
-
-    println!("{:?}", args);
 
     command
         .env("RUSTFLAGS", rust_flags)

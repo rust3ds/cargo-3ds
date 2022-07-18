@@ -1,7 +1,16 @@
-use clap::{ValueEnum, Parser, AppSettings};
+use clap::{AppSettings, Parser, ValueEnum};
 use std::fmt::{Display, Formatter};
 
 #[derive(Parser)]
+#[clap(name = "cargo")]
+#[clap(bin_name = "cargo")]
+pub enum Cargo {
+    #[clap(name = "3ds")]
+    Input(Input),
+}
+
+#[derive(clap::Args)]
+#[clap(about)]
 #[clap(global_setting(AppSettings::AllowLeadingHyphen))]
 pub struct Input {
     #[clap(value_enum)]
