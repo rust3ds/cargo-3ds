@@ -1,4 +1,4 @@
-use cargo_3ds::commands::Cargo;
+use cargo_3ds::command::Cargo;
 use cargo_3ds::{
     build_3dsx, build_elf, build_smdh, check_rust_version, get_message_format, get_metadata,
     get_should_link, link,

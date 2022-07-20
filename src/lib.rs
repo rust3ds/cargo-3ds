@@ -1,8 +1,8 @@
 extern crate core;
 
-pub mod commands;
+pub mod command;
 
-use crate::commands::{CargoCommand, Input};
+use crate::command::{CargoCommand, Input};
 use cargo_metadata::{Message, MetadataCommand};
 use core::fmt;
 use rustc_version::Channel;
