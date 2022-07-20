@@ -112,7 +112,7 @@ impl CargoCommand {
 
     fn from_args() -> Option<Self> {
         // Skip `cargo 3ds`. `cargo-3ds` isn't supported for now
-        let mut args = env::args().skip(2);
+        let mut args = env::args().skip(1);
 
         let command = args.next()?;
         let mut remaining_args: Vec<String> = args.collect();
