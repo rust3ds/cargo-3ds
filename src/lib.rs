@@ -21,13 +21,16 @@ const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
 pub fn get_should_link(input: &mut Input) -> bool {
     // When running compile only commands, don't link the executable to the 3ds.
     // Otherwise, link and run on the 3ds but do not run locally.
-    input.cmd == CargoCommand::Run
-        || (input.cmd == CargoCommand::Test
-            && if !input.cargo_opts.contains(&"--no-run".to_string()) {
-                true
-            } else {
-                false
-            })
+    match input.cmd {
+        CargoCommand::Run => {
+            true
+        }
+        CargoCommand::Test if !input.cargo_opts.contains(&"--no-run".to_string()) => {
+            input.cargo_opts.push("--no-run".to_string());
+            true
+        }
+        _ => false
+    }
 }
 
 /// Extracts the user-defined message format and if there is none,
