@@ -118,9 +118,16 @@ pub fn make_cargo_build_command(
         command.arg("-Z").arg("build-std");
     }
 
+    let cmd = match cmd {
+        CargoCommand::Build | CargoCommand::Run => "build",
+        CargoCommand::Test => "test",
+        CargoCommand::Check => "check",
+        CargoCommand::Clippy => "clippy",
+    };
+
     command
         .env("RUSTFLAGS", rust_flags)
-        .arg(&cmd.to_string())
+        .arg(cmd)
         .arg("--target")
         .arg("armv6k-nintendo-3ds")
         .arg("--message-format")

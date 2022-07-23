@@ -1,5 +1,4 @@
 use clap::{AppSettings, Args, Parser, ValueEnum};
-use std::fmt::{Display, Formatter};
 
 #[derive(Parser)]
 #[clap(name = "cargo")]
@@ -33,16 +32,5 @@ impl CargoCommand {
             self,
             CargoCommand::Build | CargoCommand::Run | CargoCommand::Test
         )
-    }
-}
-
-impl Display for CargoCommand {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CargoCommand::Build | CargoCommand::Run => write!(f, "build"),
-            CargoCommand::Test => write!(f, "test"),
-            CargoCommand::Check => write!(f, "check"),
-            CargoCommand::Clippy => write!(f, "clippy"),
-        }
     }
 }
