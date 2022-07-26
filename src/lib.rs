@@ -113,11 +113,6 @@ pub fn make_cargo_build_command(
     let sysroot = find_sysroot();
     let mut command = Command::new(cargo);
 
-    if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
-        eprintln!("No pre-build std found, using build-std");
-        command.arg("-Z").arg("build-std");
-    }
-
     let cmd = match cmd {
         CargoCommand::Build | CargoCommand::Run => "build",
         CargoCommand::Test => "test",
@@ -131,7 +126,14 @@ pub fn make_cargo_build_command(
         .arg("--target")
         .arg("armv6k-nintendo-3ds")
         .arg("--message-format")
-        .arg(message_format)
+        .arg(message_format);
+
+    if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
+        eprintln!("No pre-build std found, using build-std");
+        command.arg("-Z").arg("build-std");
+    }
+
+    command
         .args(args)
         .stdout(Stdio::piped())
         .stdin(Stdio::inherit())
