@@ -5,14 +5,14 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "cargo")]
 #[command(bin_name = "cargo")]
-pub enum Command {
+pub enum Cargo {
     #[command(name = "3ds")]
-    Root(Root),
+    Input(Input),
 }
 
 #[derive(Args, Debug)]
 #[command(version, about)]
-pub struct Root {
+pub struct Input {
     /// The cargo command to run. This command will be forwarded to the real
     /// `cargo` with the appropriate arguments for a 3DS executable.
     #[command(subcommand)]
@@ -20,7 +20,7 @@ pub struct Root {
 
     /// Don't actually run any commands, just echo them to the console.
     /// This is mostly intended for testing.
-    #[arg(hide = true)]
+    #[arg(long, hide = true)]
     pub dry_run: bool,
 
     /// Pass additional options through to the `cargo` command.
@@ -57,9 +57,10 @@ pub enum CargoCommand {
     /// This can be used with `--test` for integration tests, or `--lib` for
     /// unit tests (which require a custom test runner).
     Test(Test),
+    //
     // TODO: this doesn't seem to work for some reason...
-    #[command(external_subcommand)]
-    Other(Vec<String>),
+    // #[command(external_subcommand)]
+    // Other(Vec<String>),
 }
 
 #[derive(Args, Debug)]
@@ -97,14 +98,14 @@ pub struct Run {
     pub retries: Option<usize>,
 }
 
-impl Root {
+impl Input {
     /// Get the args to be passed to the executable itself (not `cargo`).
-    pub fn cargo_options(&self) -> &[String] {
+    pub fn cargo_opts(&self) -> &[String] {
         self.split_args().0
     }
 
     /// Get the args to be passed to the executable itself (not `cargo`).
-    pub fn executable_args(&self) -> &[String] {
+    pub fn exe_args(&self) -> &[String] {
         self.split_args().1
     }
 

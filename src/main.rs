@@ -1,4 +1,3 @@
-use cargo_3ds::cmd_clap4::Command;
 use cargo_3ds::command::Cargo;
 use cargo_3ds::{
     build_3dsx, build_elf, build_smdh, check_rust_version, get_message_format, get_metadata,
@@ -8,15 +7,13 @@ use clap::Parser;
 use std::process;
 
 fn main() {
-    let Command::Root(cmd) = cargo_3ds::cmd_clap4::Command::parse();
+    check_rust_version();
 
-    dbg!(&cmd);
-    dbg!(cmd.cargo_options());
-    dbg!(cmd.executable_args());
+    let Cargo::Input(mut input) = Cargo::parse();
 
-    // check_rust_version();
-
-    // let Cargo::Input(mut input) = Cargo::parse();
+    dbg!(&input);
+    dbg!(input.cargo_opts());
+    dbg!(input.exe_args());
 
     // let should_link = get_should_link(&mut input);
     // let message_format = get_message_format(&mut input);

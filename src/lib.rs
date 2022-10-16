@@ -22,9 +22,9 @@ pub fn get_should_link(input: &mut Input) -> bool {
     // When running compile only commands, don't link the executable to the 3ds.
     // Otherwise, link and run on the 3ds but do not run locally.
     match input.cmd {
-        CargoCommand::Run => true,
-        CargoCommand::Test if !input.cargo_opts.contains(&"--no-run".to_string()) => {
-            input.cargo_opts.push("--no-run".to_string());
+        CargoCommand::Run(_) => true,
+        CargoCommand::Test(_) if !input.cargo_opts().contains(&"--no-run".to_string()) => {
+            // input.cargo_opts().push("--no-run".to_string());
             true
         }
         _ => false,
@@ -36,12 +36,12 @@ pub fn get_should_link(input: &mut Input) -> bool {
 pub fn get_message_format(input: &mut Input) -> String {
     // Checks for a position within the args where '--message-format' is located
     if let Some(pos) = input
-        .cargo_opts
+        .cargo_opts()
         .iter()
         .position(|s| s.starts_with("--message-format"))
     {
         // Remove the arg from list
-        let arg = input.cargo_opts.remove(pos);
+        let arg = input.cargo_opts()[pos].clone(); // TODO
 
         // Allows for usage of '--message-format=<format>' and also using space separation.
         // Check for a '=' delimiter and use the second half of the split as the format,
@@ -49,15 +49,15 @@ pub fn get_message_format(input: &mut Input) -> String {
         let format = if let Some((_, format)) = arg.split_once('=') {
             format.to_string()
         } else {
-            input.cargo_opts.remove(pos)
+            input.cargo_opts()[pos].clone() // TODO
         };
 
         // Non-json formats are not supported so the executable exits.
-        if !format.starts_with("json") {
+        if format.starts_with("json") {
+            format
+        } else {
             eprintln!("error: non-JSON `message-format` is not supported");
             process::exit(1);
-        } else {
-            format
         }
     } else {
         // Default to 'json-render-diagnostics'
@@ -114,10 +114,11 @@ pub fn make_cargo_build_command(
     let mut command = Command::new(cargo);
 
     let cmd = match cmd {
-        CargoCommand::Build | CargoCommand::Run => "build",
-        CargoCommand::Test => "test",
+        CargoCommand::Build | CargoCommand::Run(_) => "build",
+        CargoCommand::Test(_) => "test",
         CargoCommand::Check => "check",
         CargoCommand::Clippy => "clippy",
+        CargoCommand::Doc => "doc",
     };
 
     command
@@ -200,7 +201,7 @@ pub fn check_rust_version() {
 
 /// Parses messages returned by the executed cargo command from [`build_elf`].
 /// The returned [`CTRConfig`] is then used for further building in and execution
-/// in [`build_smdh`], ['build_3dsx'], and [`link`].
+/// in [`build_smdh`], [`build_3dsx`], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     let metadata = MetadataCommand::new()
         .exec()
@@ -249,7 +250,7 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     };
 
     let author = match package.authors.as_slice() {
-        [name, ..] => name.to_owned(),
+        [name, ..] => name.clone(),
         [] => String::from("Unspecified Author"), // as standard with the devkitPRO toolchain
     };
 
