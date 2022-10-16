@@ -1,3 +1,4 @@
+use cargo_3ds::cmd_clap4::Command;
 use cargo_3ds::command::Cargo;
 use cargo_3ds::{
     build_3dsx, build_elf, build_smdh, check_rust_version, get_message_format, get_metadata,
@@ -7,34 +8,40 @@ use clap::Parser;
 use std::process;
 
 fn main() {
-    check_rust_version();
+    let Command::Root(cmd) = cargo_3ds::cmd_clap4::Command::parse();
 
-    let Cargo::Input(mut input) = Cargo::parse();
+    dbg!(&cmd);
+    dbg!(cmd.cargo_options());
+    dbg!(cmd.executable_args());
 
-    let should_link = get_should_link(&mut input);
-    let message_format = get_message_format(&mut input);
+    // check_rust_version();
 
-    let (status, messages) = build_elf(input.cmd, &message_format, &input.cargo_opts);
+    // let Cargo::Input(mut input) = Cargo::parse();
 
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
+    // let should_link = get_should_link(&mut input);
+    // let message_format = get_message_format(&mut input);
 
-    if !input.cmd.should_build_3dsx() {
-        return;
-    }
+    // let (status, messages) = build_elf(input.cmd, &message_format, &input.cargo_opts);
 
-    eprintln!("Getting metadata");
-    let app_conf = get_metadata(&messages);
+    // if !status.success() {
+    //     process::exit(status.code().unwrap_or(1));
+    // }
 
-    eprintln!("Building smdh:{}", app_conf.path_smdh().display());
-    build_smdh(&app_conf);
+    // if !input.cmd.should_build_3dsx() {
+    //     return;
+    // }
 
-    eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
-    build_3dsx(&app_conf);
+    // eprintln!("Getting metadata");
+    // let app_conf = get_metadata(&messages);
 
-    if should_link {
-        eprintln!("Running 3dslink");
-        link(&app_conf);
-    }
+    // eprintln!("Building smdh:{}", app_conf.path_smdh().display());
+    // build_smdh(&app_conf);
+
+    // eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
+    // build_3dsx(&app_conf);
+
+    // if should_link {
+    //     eprintln!("Running 3dslink");
+    //     link(&app_conf);
+    // }
 }
