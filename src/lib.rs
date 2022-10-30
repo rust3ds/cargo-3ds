@@ -1,8 +1,6 @@
-extern crate core;
-
 pub mod command;
 
-use crate::command::{CargoCommand, Input};
+use crate::command::{CargoCmd, Input};
 use cargo_metadata::{Message, MetadataCommand};
 use core::fmt;
 use rustc_version::Channel;
@@ -22,11 +20,11 @@ pub fn get_should_link(input: &mut Input) -> bool {
     // When running compile only commands, don't link the executable to the 3ds.
     // Otherwise, link and run on the 3ds but do not run locally.
     match input.cmd {
-        CargoCommand::Run(_) => true,
-        CargoCommand::Test(_) if !input.cargo_opts().contains(&"--no-run".to_string()) => {
-            // input.cargo_opts().push("--no-run".to_string());
-            true
-        }
+        CargoCmd::Run(_) => true,
+        // CargoCmd::Test(_) if !input.cargo_opts().contains(&"--no-run".to_string()) => {
+        //     // input.cargo_opts().push("--no-run".to_string());
+        //     true
+        // }
         _ => false,
     }
 }
@@ -35,41 +33,42 @@ pub fn get_should_link(input: &mut Input) -> bool {
 /// default to `json-render-diagnostics`.
 pub fn get_message_format(input: &mut Input) -> String {
     // Checks for a position within the args where '--message-format' is located
-    if let Some(pos) = input
-        .cargo_opts()
-        .iter()
-        .position(|s| s.starts_with("--message-format"))
-    {
-        // Remove the arg from list
-        let arg = input.cargo_opts()[pos].clone(); // TODO
+    todo!();
+    // if let Some(pos) = input
+    //     .cargo_opts()
+    //     .iter()
+    //     .position(|s| s.starts_with("--message-format"))
+    // {
+    //     // Remove the arg from list
+    //     let arg = input.cargo_opts()[pos].clone(); // TODO
 
-        // Allows for usage of '--message-format=<format>' and also using space separation.
-        // Check for a '=' delimiter and use the second half of the split as the format,
-        // otherwise remove next arg which is now at the same position as the original flag.
-        let format = if let Some((_, format)) = arg.split_once('=') {
-            format.to_string()
-        } else {
-            input.cargo_opts()[pos].clone() // TODO
-        };
+    //     // Allows for usage of '--message-format=<format>' and also using space separation.
+    //     // Check for a '=' delimiter and use the second half of the split as the format,
+    //     // otherwise remove next arg which is now at the same position as the original flag.
+    //     let format = if let Some((_, format)) = arg.split_once('=') {
+    //         format.to_string()
+    //     } else {
+    //         input.cargo_opts()[pos].clone() // TODO
+    //     };
 
-        // Non-json formats are not supported so the executable exits.
-        if format.starts_with("json") {
-            format
-        } else {
-            eprintln!("error: non-JSON `message-format` is not supported");
-            process::exit(1);
-        }
-    } else {
-        // Default to 'json-render-diagnostics'
-        DEFAULT_MESSAGE_FORMAT.to_string()
-    }
+    //     // Non-json formats are not supported so the executable exits.
+    //     if format.starts_with("json") {
+    //         format
+    //     } else {
+    //         eprintln!("error: non-JSON `message-format` is not supported");
+    //         process::exit(1);
+    //     }
+    // } else {
+    //     // Default to 'json-render-diagnostics'
+    //     DEFAULT_MESSAGE_FORMAT.to_string()
+    // }
 }
 
 /// Build the elf that will be used to create other 3ds files.
 /// The command built from [`make_cargo_build_command`] is executed
 /// and the messages from the spawned process are parsed and returned.
 pub fn build_elf(
-    cmd: CargoCommand,
+    cmd: CargoCmd,
     message_format: &str,
     args: &Vec<String>,
 ) -> (ExitStatus, Vec<Message>) {
@@ -100,7 +99,7 @@ pub fn build_elf(
 /// Create the cargo build command, but don't execute it.
 /// If there is no pre-built std detected in the sysroot, `build-std` is used.
 pub fn make_cargo_build_command(
-    cmd: CargoCommand,
+    cmd: CargoCmd,
     message_format: &str,
     args: &Vec<String>,
 ) -> Command {
@@ -114,11 +113,9 @@ pub fn make_cargo_build_command(
     let mut command = Command::new(cargo);
 
     let cmd = match cmd {
-        CargoCommand::Build | CargoCommand::Run(_) => "build",
-        CargoCommand::Test(_) => "test",
-        CargoCommand::Check => "check",
-        CargoCommand::Clippy => "clippy",
-        CargoCommand::Doc => "doc",
+        CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
+        CargoCmd::Test(_) => "test",
+        CargoCmd::Passthrough(_) => todo!(),
     };
 
     command

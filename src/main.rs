@@ -1,9 +1,9 @@
-use cargo_3ds::command::Cargo;
+use cargo_3ds::command::{Cargo, CargoCmd, Input, Run, Test};
 use cargo_3ds::{
     build_3dsx, build_elf, build_smdh, check_rust_version, get_message_format, get_metadata,
     get_should_link, link,
 };
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use std::process;
 
 fn main() {
@@ -12,10 +12,21 @@ fn main() {
     let Cargo::Input(mut input) = Cargo::parse();
 
     dbg!(&input);
-    dbg!(input.cargo_opts());
-    dbg!(input.exe_args());
 
-    // let should_link = get_should_link(&mut input);
+    let cargo_args = match &input.cmd {
+        CargoCmd::Build(cargo_args)
+        | CargoCmd::Run(Run { cargo_args, .. })
+        | CargoCmd::Test(Test {
+            run_args: Run { cargo_args, .. },
+            ..
+        }) => cargo_args,
+        CargoCmd::Passthrough(other) => todo!(),
+    };
+
+    dbg!(cargo_args.cargo_opts());
+    dbg!(cargo_args.exe_args());
+
+    // let
     // let message_format = get_message_format(&mut input);
 
     // let (status, messages) = build_elf(input.cmd, &message_format, &input.cargo_opts);
