@@ -186,6 +186,49 @@ impl RemainingArgs {
     }
 }
 
+impl Run {
+    /// Get the args to pass to `3dslink` based on these options.
+    pub fn get_3dslink_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+
+        if let Some(address) = self.address {
+            args.extend(["--address".to_string(), address.to_string()]);
+        }
+
+        if let Some(argv0) = &self.argv0 {
+            args.extend(["--arg0".to_string(), argv0.clone()]);
+        }
+
+        if let Some(retries) = self.retries {
+            args.extend(["--retries".to_string(), retries.to_string()]);
+        }
+
+        if self.server {
+            args.push("--server".to_string());
+        }
+
+        let exe_args = self.cargo_args.exe_args();
+        if !exe_args.is_empty() {
+            // For some reason 3dslink seems to want 2 instances of `--`, one
+            // in front of all of the args like this...
+            args.extend(["--args".to_string(), "--".to_string()]);
+
+            let mut escaped = false;
+            for arg in exe_args.iter().cloned() {
+                if arg.starts_with('-') && !escaped {
+                    // And one before the first `-` arg that is passed in.
+                    args.extend(["--".to_string(), arg]);
+                    escaped = true;
+                } else {
+                    args.push(arg);
+                }
+            }
+        }
+
+        args
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

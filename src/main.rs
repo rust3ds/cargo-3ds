@@ -38,9 +38,7 @@ fn main() {
     build_3dsx(&app_conf);
 
     if input.cmd.should_link_to_device() {
-        // TODO plumb in exe_args and various 3dslink args
-
         eprintln!("Running 3dslink");
-        link(&app_conf);
+        link(&app_conf, &input.cmd);
     }
 }

@@ -97,7 +97,7 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    dbg!(command)
+    command
 }
 
 /// Finds the sysroot path of the current toolchain
@@ -285,9 +285,16 @@ pub fn build_3dsx(config: &CTRConfig) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig) {
+pub fn link(config: &CTRConfig, cmd: &CargoCmd) {
+    let run_args = match cmd {
+        CargoCmd::Run(run) => run,
+        CargoCmd::Test(test) => &test.run_args,
+        _ => unreachable!(),
+    };
+
     let mut process = Command::new("3dslink")
         .arg(config.path_3dsx())
+        .args(run_args.get_3dslink_args())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
