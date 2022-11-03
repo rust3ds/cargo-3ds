@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, io, process};
 
-/// Built a command using [`make_cargo_build_command`] and execute it,
+/// Build a command using [`make_cargo_build_command`] and execute it,
 /// parsing and returning the messages from the spawned process.
 ///
 /// For commands that produce an executable output, this function will build the

@@ -14,11 +14,11 @@ pub struct Input {
     pub cmd: CargoCmd,
 }
 
-/// The cargo command to run. This command will be forwarded to the real
-/// `cargo` with the appropriate arguments for a 3DS executable.
+/// Run a cargo command. COMMAND will be forwarded to the real
+/// `cargo` with the appropriate arguments for the 3DS target.
 ///
-/// If another command is passed which is not recognized, it will be passed
-/// through unmodified to `cargo` with RUSTFLAGS set for the 3DS.
+/// If an unrecognized COMMAND is used, it will be passed through unmodified
+/// to `cargo` with the appropriate flags set for the 3DS target.
 #[derive(Subcommand, Debug)]
 #[command(allow_external_subcommands = true)]
 pub enum CargoCmd {
@@ -46,16 +46,13 @@ pub enum CargoCmd {
 pub struct RemainingArgs {
     /// Pass additional options through to the `cargo` command.
     ///
-    /// To pass flags that start with `-`, you must use `--` to separate `cargo 3ds`
-    /// options from cargo options. Any argument after `--` will be passed through
-    /// to cargo unmodified.
+    /// All arguments after the first `--`, or starting with the first unrecognized
+    /// option, will be passed through to `cargo` unmodified.
     ///
-    /// If one of the arguments is itself `--`, the args following that will be
-    /// considered as args to pass to the executable, rather than to `cargo`
-    /// (only works for the `run` or `test` commands). For example, if you want
-    /// to pass some args to the executable directly it might look like this:
-    ///
-    /// > cargo 3ds run -- -- arg1 arg2
+    /// To pass arguments to an executable being run, a *second* `--` must be
+    /// used to disambiguate cargo arguments from executable arguments.
+    /// For example, `cargo 3ds run -- -- xyz` runs an executable with the argument
+    /// `xyz`.
     #[arg(trailing_var_arg = true)]
     #[arg(allow_hyphen_values = true)]
     #[arg(global = true)]
@@ -242,8 +239,8 @@ mod tests {
 
     #[test]
     fn extract_format() {
-        for (args, expected) in [
-            (&["--foo", "--message-format=json", "bar"][..], Some("json")),
+        const CASES: &[(&[&str], Option<&str>)] = &[
+            (&["--foo", "--message-format=json", "bar"], Some("json")),
             (&["--foo", "--message-format", "json", "bar"], Some("json")),
             (
                 &[
@@ -258,7 +255,10 @@ mod tests {
                 &["--foo", "--message-format=json-render-diagnostics", "bar"],
                 Some("json-render-diagnostics"),
             ),
-        ] {
+            (&["--foo", "bar"], None),
+        ];
+
+        for (args, expected) in CASES {
             let mut cmd = CargoCmd::Build(RemainingArgs {
                 args: args.iter().map(ToString::to_string).collect(),
             });
