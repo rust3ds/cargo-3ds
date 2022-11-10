@@ -1,85 +1,32 @@
-extern crate core;
-
 pub mod command;
 
-use crate::command::{CargoCommand, Input};
+use crate::command::CargoCmd;
+
 use cargo_metadata::{Message, MetadataCommand};
-use core::fmt;
 use rustc_version::Channel;
 use semver::Version;
 use serde::Deserialize;
+use tee::TeeReader;
+
+use core::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, io, process};
-use tee::TeeReader;
 
-const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
-
-/// Gets whether the executable should link the generated files to a 3ds
-/// based on the parsed input.
-pub fn get_should_link(input: &mut Input) -> bool {
-    // When running compile only commands, don't link the executable to the 3ds.
-    // Otherwise, link and run on the 3ds but do not run locally.
-    match input.cmd {
-        CargoCommand::Run => true,
-        CargoCommand::Test if !input.cargo_opts.contains(&"--no-run".to_string()) => {
-            input.cargo_opts.push("--no-run".to_string());
-            true
-        }
-        _ => false,
-    }
-}
-
-/// Extracts the user-defined message format and if there is none,
-/// default to `json-render-diagnostics`.
-pub fn get_message_format(input: &mut Input) -> String {
-    // Checks for a position within the args where '--message-format' is located
-    if let Some(pos) = input
-        .cargo_opts
-        .iter()
-        .position(|s| s.starts_with("--message-format"))
-    {
-        // Remove the arg from list
-        let arg = input.cargo_opts.remove(pos);
-
-        // Allows for usage of '--message-format=<format>' and also using space separation.
-        // Check for a '=' delimiter and use the second half of the split as the format,
-        // otherwise remove next arg which is now at the same position as the original flag.
-        let format = if let Some((_, format)) = arg.split_once('=') {
-            format.to_string()
-        } else {
-            input.cargo_opts.remove(pos)
-        };
-
-        // Non-json formats are not supported so the executable exits.
-        if !format.starts_with("json") {
-            eprintln!("error: non-JSON `message-format` is not supported");
-            process::exit(1);
-        } else {
-            format
-        }
-    } else {
-        // Default to 'json-render-diagnostics'
-        DEFAULT_MESSAGE_FORMAT.to_string()
-    }
-}
-
-/// Build the elf that will be used to create other 3ds files.
-/// The command built from [`make_cargo_build_command`] is executed
-/// and the messages from the spawned process are parsed and returned.
-pub fn build_elf(
-    cmd: CargoCommand,
-    message_format: &str,
-    args: &Vec<String>,
-) -> (ExitStatus, Vec<Message>) {
-    let mut command = make_cargo_build_command(cmd, message_format, args);
+/// Build a command using [`make_cargo_build_command`] and execute it,
+/// parsing and returning the messages from the spawned process.
+///
+/// For commands that produce an executable output, this function will build the
+/// `.elf` binary that can be used to create other 3ds files.
+pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
+    let mut command = make_cargo_build_command(cmd, &message_format);
     let mut process = command.spawn().unwrap();
     let command_stdout = process.stdout.take().unwrap();
 
     let mut tee_reader;
     let mut stdout_reader;
-    let buf_reader: &mut dyn BufRead = if message_format == DEFAULT_MESSAGE_FORMAT {
+    let buf_reader: &mut dyn BufRead = if message_format.is_none() {
         stdout_reader = BufReader::new(command_stdout);
         &mut stdout_reader
     } else {
@@ -99,11 +46,7 @@ pub fn build_elf(
 
 /// Create the cargo build command, but don't execute it.
 /// If there is no pre-built std detected in the sysroot, `build-std` is used.
-pub fn make_cargo_build_command(
-    cmd: CargoCommand,
-    message_format: &str,
-    args: &Vec<String>,
-) -> Command {
+pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
     let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
         + &format!(
             " -L{}/libctru/lib -lctru",
@@ -113,28 +56,43 @@ pub fn make_cargo_build_command(
     let sysroot = find_sysroot();
     let mut command = Command::new(cargo);
 
-    let cmd = match cmd {
-        CargoCommand::Build | CargoCommand::Run => "build",
-        CargoCommand::Test => "test",
-        CargoCommand::Check => "check",
-        CargoCommand::Clippy => "clippy",
+    let cmd_str = match cmd {
+        CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
+        CargoCmd::Test(_) => "test",
+        CargoCmd::Passthrough(cmd) => &cmd[0],
     };
 
     command
         .env("RUSTFLAGS", rust_flags)
-        .arg(cmd)
+        .arg(cmd_str)
         .arg("--target")
         .arg("armv6k-nintendo-3ds")
         .arg("--message-format")
-        .arg(message_format);
+        .arg(
+            message_format
+                .as_deref()
+                .unwrap_or(CargoCmd::DEFAULT_MESSAGE_FORMAT),
+        );
 
     if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
         eprintln!("No pre-build std found, using build-std");
         command.arg("-Z").arg("build-std");
     }
 
+    let cargo_args = match cmd {
+        CargoCmd::Build(cargo_args) => cargo_args.cargo_args(),
+        CargoCmd::Run(run) => run.cargo_args.cargo_args(),
+        CargoCmd::Test(test) => {
+            // We can't run 3DS executables on the host, so pass --no-run here and
+            // send the executable with 3dslink later, if the user wants
+            command.arg("--no-run");
+            test.run_args.cargo_args.cargo_args()
+        }
+        CargoCmd::Passthrough(other) => &other[1..],
+    };
+
     command
-        .args(args)
+        .args(cargo_args)
         .stdout(Stdio::piped())
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -200,7 +158,7 @@ pub fn check_rust_version() {
 
 /// Parses messages returned by the executed cargo command from [`build_elf`].
 /// The returned [`CTRConfig`] is then used for further building in and execution
-/// in [`build_smdh`], ['build_3dsx'], and [`link`].
+/// in [`build_smdh`], [`build_3dsx`], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     let metadata = MetadataCommand::new()
         .exec()
@@ -249,7 +207,7 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     };
 
     let author = match package.authors.as_slice() {
-        [name, ..] => name.to_owned(),
+        [name, ..] => name.clone(),
         [] => String::from("Unspecified Author"), // as standard with the devkitPRO toolchain
     };
 
@@ -327,9 +285,16 @@ pub fn build_3dsx(config: &CTRConfig) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig) {
+pub fn link(config: &CTRConfig, cmd: &CargoCmd) {
+    let run_args = match cmd {
+        CargoCmd::Run(run) => run,
+        CargoCmd::Test(test) => &test.run_args,
+        _ => unreachable!(),
+    };
+
     let mut process = Command::new("3dslink")
         .arg(config.path_3dsx())
+        .args(run_args.get_3dslink_args())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

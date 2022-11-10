@@ -1,9 +1,8 @@
 use cargo_3ds::command::Cargo;
-use cargo_3ds::{
-    build_3dsx, build_elf, build_smdh, check_rust_version, get_message_format, get_metadata,
-    get_should_link, link,
-};
+use cargo_3ds::{build_3dsx, build_smdh, check_rust_version, get_metadata, link, run_cargo};
+
 use clap::Parser;
+
 use std::process;
 
 fn main() {
@@ -11,10 +10,15 @@ fn main() {
 
     let Cargo::Input(mut input) = Cargo::parse();
 
-    let should_link = get_should_link(&mut input);
-    let message_format = get_message_format(&mut input);
+    let message_format = match input.cmd.extract_message_format() {
+        Ok(fmt) => fmt,
+        Err(msg) => {
+            eprintln!("{msg}");
+            process::exit(1)
+        }
+    };
 
-    let (status, messages) = build_elf(input.cmd, &message_format, &input.cargo_opts);
+    let (status, messages) = run_cargo(&input.cmd, message_format);
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
@@ -33,8 +37,8 @@ fn main() {
     eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
     build_3dsx(&app_conf);
 
-    if should_link {
+    if input.cmd.should_link_to_device() {
         eprintln!("Running 3dslink");
-        link(&app_conf);
+        link(&app_conf, &input.cmd);
     }
 }
