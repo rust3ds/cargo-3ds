@@ -76,7 +76,7 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
 
     if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
         eprintln!("No pre-build std found, using build-std");
-        command.arg("-Z").arg("build-std");
+        command.arg("-Zbuild-std=panic_abort,std");
     }
 
     let cargo_args = match cmd {
