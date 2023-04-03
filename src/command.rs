@@ -66,6 +66,11 @@ pub struct Test {
     #[arg(long)]
     pub no_run: bool,
 
+    /// If set, documentation tests will be built instead of unit tests.
+    /// This implies `--no-run`.
+    #[arg(long)]
+    pub doc: bool,
+
     // The test command uses a superset of the same arguments as Run.
     #[command(flatten)]
     pub run_args: Run,
@@ -104,7 +109,10 @@ pub struct Run {
 impl CargoCmd {
     /// Whether or not this command should build a 3DSX executable file.
     pub fn should_build_3dsx(&self) -> bool {
-        matches!(self, Self::Build(_) | Self::Run(_) | Self::Test(_))
+        matches!(
+            self,
+            Self::Build(_) | Self::Run(_) | Self::Test(Test { doc: false, .. })
+        )
     }
 
     /// Whether or not the resulting executable should be sent to the 3DS with
