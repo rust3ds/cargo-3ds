@@ -96,6 +96,6 @@ executable arguments, *another* `--` can be used. For example:
   This works without two `--` instances because `--verbose` begins the set of
   `cargo` arguments and ends the set of 3DS-specific arguments.
 
-## LICENSE
+## License
 
 This project is distributed under the MIT license or the Apache-2.0 license.
