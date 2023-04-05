@@ -119,8 +119,8 @@ impl CargoCmd {
     /// `3dslink`.
     pub fn should_link_to_device(&self) -> bool {
         match self {
-            CargoCmd::Test(test) => !test.no_run,
-            CargoCmd::Run(_) => true,
+            Self::Test(test) => !test.no_run,
+            Self::Run(_) => true,
             _ => false,
         }
     }
@@ -128,12 +128,26 @@ impl CargoCmd {
     pub const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
 
     pub fn extract_message_format(&mut self) -> Result<Option<String>, String> {
-        Self::extract_message_format_from_args(match self {
-            CargoCmd::Build(args) => &mut args.args,
-            CargoCmd::Run(run) => &mut run.cargo_args.args,
-            CargoCmd::Test(test) => &mut test.run_args.cargo_args.args,
-            CargoCmd::Passthrough(args) => args,
-        })
+        let cargo_args = match self {
+            Self::Build(args) => &mut args.args,
+            Self::Run(run) => &mut run.cargo_args.args,
+            Self::Passthrough(args) => args,
+            Self::Test(test) => &mut test.run_args.cargo_args.args,
+        };
+
+        let format = Self::extract_message_format_from_args(cargo_args)?;
+        if format.is_some() {
+            return Ok(format);
+        }
+
+        if let Self::Test(Test { doc: true, .. }) = self {
+            // We don't care about JSON output for doctests since we're not
+            // building any 3dsx etc. Just use the default output as it's more
+            // readable compared to DEFAULT_MESSAGE_FORMAT
+            Ok(Some(String::from("human")))
+        } else {
+            Ok(None)
+        }
     }
 
     fn extract_message_format_from_args(

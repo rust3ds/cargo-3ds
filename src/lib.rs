@@ -97,6 +97,8 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
             // user wants
 
             if test.doc {
+                eprintln!("Documentation tests requested, no 3dsx will be built or run");
+
                 // https://github.com/rust-lang/cargo/issues/7040
                 command.args(["--doc", "-Z", "doctest-xcompile"]);
 
