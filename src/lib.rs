@@ -3,6 +3,7 @@ pub mod command;
 use crate::command::CargoCmd;
 
 use cargo_metadata::{Message, MetadataCommand};
+use command::Test;
 use rustc_version::Channel;
 use semver::Version;
 use serde::Deserialize;
@@ -26,15 +27,23 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
 
     let mut tee_reader;
     let mut stdout_reader;
-    let buf_reader: &mut dyn BufRead = if message_format.is_none() {
-        stdout_reader = BufReader::new(command_stdout);
-        &mut stdout_reader
-    } else {
-        // The user presumably cares about the message format, so we should
+
+    let buf_reader: &mut dyn BufRead = match (message_format, cmd) {
+        // The user presumably cares about the message format if set, so we should
         // copy stuff to stdout like they expect. We can still extract the executable
         // information out of it that we need for 3dsxtool etc.
-        tee_reader = BufReader::new(TeeReader::new(command_stdout, io::stdout()));
-        &mut tee_reader
+        (Some(_), _) |
+        // Rustdoc unfortunately prints to stdout for compile errors, so
+        // we also use a tee when building doc tests too.
+        // Possibly related: https://github.com/rust-lang/rust/issues/75135
+        (None, CargoCmd::Test(Test { doc: true, .. })) => {
+            tee_reader = BufReader::new(TeeReader::new(command_stdout, io::stdout()));
+            &mut tee_reader
+        }
+        _ => {
+            stdout_reader = BufReader::new(command_stdout);
+            &mut stdout_reader
+        }
     };
 
     let messages = Message::parse_stream(buf_reader)
@@ -75,7 +84,7 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
         );
 
     if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
-        eprintln!("No pre-build std found, using build-std");
+        eprintln!("No pre-built std found, using build-std");
         command.arg("-Z").arg("build-std");
     }
 
@@ -83,9 +92,27 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
         CargoCmd::Build(cargo_args) => cargo_args.cargo_args(),
         CargoCmd::Run(run) => run.cargo_args.cargo_args(),
         CargoCmd::Test(test) => {
-            // We can't run 3DS executables on the host, so pass --no-run here and
-            // send the executable with 3dslink later, if the user wants
-            command.arg("--no-run");
+            // We can't run 3DS executables on the host, so unconditionally pass
+            // --no-run here and send the executable with 3dslink later, if the
+            // user wants
+
+            if test.doc {
+                eprintln!("Documentation tests requested, no 3dsx will be built or run");
+
+                // https://github.com/rust-lang/cargo/issues/7040
+                command.args(["--doc", "-Z", "doctest-xcompile"]);
+
+                // Cargo doesn't like --no-run for doctests:
+                // https://github.com/rust-lang/rust/issues/87022
+                let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
+                    // TODO: should we make this output directory depend on profile etc?
+                    + " --no-run --persist-doctests target/doctests";
+
+                command.env("RUSTDOCFLAGS", rustdoc_flags);
+            } else {
+                command.arg("--no-run");
+            }
+
             test.run_args.cargo_args.cargo_args()
         }
         CargoCmd::Passthrough(other) => &other[1..],
@@ -146,10 +173,7 @@ pub fn check_rust_version() {
     };
 
     if old_version || old_commit {
-        eprintln!(
-            "cargo-3ds requires rustc nightly version >= {}",
-            MINIMUM_COMMIT_DATE,
-        );
+        eprintln!("cargo-3ds requires rustc nightly version >= {MINIMUM_COMMIT_DATE}");
         eprintln!("Please run `rustup update nightly` to upgrade your nightly version");
 
         process::exit(1);

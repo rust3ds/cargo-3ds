@@ -96,6 +96,18 @@ executable arguments, *another* `--` can be used. For example:
   This works without two `--` instances because `--verbose` begins the set of
   `cargo` arguments and ends the set of 3DS-specific arguments.
 
+### Caveats
+
+Due to the fact that only one executable at a time can be sent with `3dslink`,
+by default only the "last" executable built will be used. If a `test` or `run`
+command builds more than one binary, you may need to filter it in order to run
+the executable you want.
+
+Doc tests sort of work, but `cargo-3ds` uses a number of unstable cargo and
+rustdoc features to make them work, so the output won't be as pretty and will
+require some manual workarounds to actually run the tests and see output from them.
+For now, `cargo 3ds test --doc` will not build a 3dsx file or use `3dslink` at all.
+
 ## License
 
 This project is distributed under the MIT license or the Apache-2.0 license.
