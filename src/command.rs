@@ -4,7 +4,7 @@ use std::io::Read;
 use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{CTRConfig, build_3dsx, build_smdh, get_metadata, link};
+use crate::{build_3dsx, build_smdh, get_metadata, link, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -46,7 +46,7 @@ pub enum CargoCmd {
     // NOTE: it seems docstring + name for external subcommands are not rendered
     // in help, but we might as well set them here in case a future version of clap
     // does include them in help text.
-    /// Run any other `cargo` command with RUSTFLAGS set for the 3DS.
+    /// Run any other `cargo` command with custom building tailored for the 3DS.
     #[command(external_subcommand, name = "COMMAND")]
     Passthrough(Vec<String>),
 }
@@ -129,7 +129,7 @@ pub struct New {
 }
 
 impl CargoCmd {
-    /// Whether or not this command should compile any code, and thus needs import the custom environment configuration (e.g. RUSTFLAGS, target, std).
+    /// Whether or not this command should compile any code, and thus needs import the custom environment configuration (e.g. target spec).
     pub fn should_compile(&self) -> bool {
         matches!(
             self,

@@ -30,7 +30,7 @@ See [passthrough arguments](#passthrough-arguments) for more details.
 
 It is also possible to pass any other `cargo` command (e.g. `doc`, `check`),
 and all its arguments will be passed through directly to `cargo` unmodified,
-with the proper `RUSTFLAGS` and `--target` set for the 3DS target.
+with the proper `--target armv6k-nintendo-3ds` set.
 
 ### Basic Examples
 

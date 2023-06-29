@@ -61,11 +61,6 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
 /// Create a cargo command used for building based on the context.
 /// If there is no pre-built std detected in the sysroot, `build-std` is used.
 pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
-    let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
-        + &format!(
-            " -L{}/libctru/lib -lctru",
-            env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
-        );
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let sysroot = find_sysroot();
     let mut command = Command::new(cargo);
@@ -78,7 +73,6 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
     };
 
     command
-        .env("RUSTFLAGS", rust_flags)
         .arg(cmd_str)
         .arg("--target")
         .arg("armv6k-nintendo-3ds")
