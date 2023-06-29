@@ -1,6 +1,6 @@
 pub mod command;
 
-use crate::command::CargoCmd;
+use crate::command::{CargoCmd, Run};
 
 use cargo_metadata::{Message, MetadataCommand};
 use command::Test;
@@ -21,7 +21,12 @@ use std::{env, io, process};
 /// For commands that produce an executable output, this function will build the
 /// `.elf` binary that can be used to create other 3ds files.
 pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
-    let mut command = make_cargo_build_command(cmd, &message_format);
+    let mut command = if cmd.should_compile() {
+        make_cargo_build_command(cmd, &message_format)
+    } else {
+        make_cargo_generic_command(cmd)
+    };
+
     let mut process = command.spawn().unwrap();
     let command_stdout = process.stdout.take().unwrap();
 
@@ -53,7 +58,7 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
     (process.wait().unwrap(), messages)
 }
 
-/// Create the cargo build command, but don't execute it.
+/// Create a cargo command used for building based on the context.
 /// If there is no pre-built std detected in the sysroot, `build-std` is used.
 pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
     let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
@@ -69,6 +74,7 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
         CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
         CargoCmd::Test(_) => "test",
         CargoCmd::Passthrough(cmd) => &cmd[0],
+        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
     };
 
     command
@@ -89,8 +95,8 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
     }
 
     let cargo_args = match cmd {
-        CargoCmd::Build(cargo_args) => cargo_args.cargo_args(),
-        CargoCmd::Run(run) => run.cargo_args.cargo_args(),
+        CargoCmd::Build(build) => build.cargo_args.cargo_args(),
+        CargoCmd::Run(run) => run.build_args.cargo_args.cargo_args(),
         CargoCmd::Test(test) => {
             // We can't run 3DS executables on the host, so unconditionally pass
             // --no-run here and send the executable with 3dslink later, if the
@@ -116,6 +122,39 @@ pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>)
             test.run_args.cargo_args.cargo_args()
         }
         CargoCmd::Passthrough(other) => &other[1..],
+        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
+    };
+
+    command
+        .args(cargo_args)
+        .stdout(Stdio::piped())
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    command
+}
+
+/// Create a cargo command used for generic purposes based on the context.
+pub fn make_cargo_generic_command(cmd: &CargoCmd) -> Command {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let mut command = Command::new(cargo);
+
+    let cmd_str = match cmd {
+        CargoCmd::New(_) => "new",
+        _ => panic!("tried to run an unsupported generic cargo subcommand"),
+    };
+
+    command.arg(cmd_str);
+
+    let cargo_args = match cmd {
+        CargoCmd::New(new) => {
+            println!("{}", new.path);
+
+            command.arg(&new.path);
+
+            new.cargo_args.cargo_args()
+        }
+        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
     };
 
     command
@@ -180,7 +219,7 @@ pub fn check_rust_version() {
     }
 }
 
-/// Parses messages returned by the executed cargo command from [`build_elf`].
+/// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
 /// The returned [`CTRConfig`] is then used for further building in and execution
 /// in [`build_smdh`], [`build_3dsx`], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
@@ -309,13 +348,7 @@ pub fn build_3dsx(config: &CTRConfig) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig, cmd: &CargoCmd) {
-    let run_args = match cmd {
-        CargoCmd::Run(run) => run,
-        CargoCmd::Test(test) => &test.run_args,
-        _ => unreachable!(),
-    };
-
+pub fn link(config: &CTRConfig, run_args: &Run) {
     let mut process = Command::new("3dslink")
         .arg(config.path_3dsx())
         .args(run_args.get_3dslink_args())
@@ -410,8 +443,8 @@ impl fmt::Display for CommitDate {
 }
 
 const MINIMUM_COMMIT_DATE: CommitDate = CommitDate {
-    year: 2022,
-    month: 6,
-    day: 15,
+    year: 2023,
+    month: 5,
+    day: 31,
 };
-const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 63, 0);
+const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 70, 0);

@@ -1,4 +1,10 @@
+use std::fs;
+use std::io::Read;
+
+use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
+
+use crate::{CTRConfig, build_3dsx, build_smdh, get_metadata, link};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -23,7 +29,7 @@ pub struct Input {
 #[command(allow_external_subcommands = true)]
 pub enum CargoCmd {
     /// Builds an executable suitable to run on a 3DS (3dsx).
-    Build(RemainingArgs),
+    Build(Build),
 
     /// Builds an executable and sends it to a device with `3dslink`.
     Run(Run),
@@ -33,6 +39,9 @@ pub enum CargoCmd {
     /// This can be used with `--test` for integration tests, or `--lib` for
     /// unit tests (which require a custom test runner).
     Test(Test),
+
+    /// Sets up a new cargo project suitable to run on a 3DS.
+    New(New),
 
     // NOTE: it seems docstring + name for external subcommands are not rendered
     // in help, but we might as well set them here in case a future version of clap
@@ -61,19 +70,10 @@ pub struct RemainingArgs {
 }
 
 #[derive(Parser, Debug)]
-pub struct Test {
-    /// If set, the built executable will not be sent to the device to run it.
-    #[arg(long)]
-    pub no_run: bool,
-
-    /// If set, documentation tests will be built instead of unit tests.
-    /// This implies `--no-run`.
-    #[arg(long)]
-    pub doc: bool,
-
-    // The test command uses a superset of the same arguments as Run.
+pub struct Build {
+    // Passthrough cargo options.
     #[command(flatten)]
-    pub run_args: Run,
+    pub cargo_args: RemainingArgs,
 }
 
 #[derive(Parser, Debug)]
@@ -101,12 +101,42 @@ pub struct Run {
     #[arg(long)]
     pub retries: Option<usize>,
 
-    // Passthrough cargo options.
+    // Passthrough `cargo build` options.
+    #[command(flatten)]
+    pub build_args: Build,
+}
+
+#[derive(Parser, Debug)]
+pub struct Test {
+    /// If set, the built executable will not be sent to the device to run it.
+    #[arg(long)]
+    pub no_run: bool,
+
+    // The test command uses a superset of the same arguments as Run.
+    #[command(flatten)]
+    pub run_args: Run,
+}
+
+#[derive(Parser, Debug)]
+pub struct New {
+    /// If set, the built executable will not be sent to the device to run it.
+    #[arg(required = true)]
+    pub path: String,
+
+    // The test command uses a superset of the same arguments as Run.
     #[command(flatten)]
     pub cargo_args: RemainingArgs,
 }
 
 impl CargoCmd {
+    /// Whether or not this command should compile any code, and thus needs import the custom environment configuration (e.g. RUSTFLAGS, target, std).
+    pub fn should_compile(&self) -> bool {
+        matches!(
+            self,
+            Self::Build(_) | Self::Run(_) | Self::Test(_) | Self::Passthrough(_)
+        )
+    }
+
     /// Whether or not this command should build a 3DSX executable file.
     pub fn should_build_3dsx(&self) -> bool {
         matches!(
@@ -183,6 +213,31 @@ impl CargoCmd {
             Ok(None)
         }
     }
+
+    /// Runs the custom callback *after* the cargo command, depending on the type of command launched.
+    ///
+    /// # Examples
+    ///
+    /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
+    /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
+    pub fn run_callback(&self, messages: &[Message]) {
+        let config = if self.should_build_3dsx() {
+            eprintln!("Getting metadata");
+
+            get_metadata(messages)
+        } else {
+            CTRConfig::default()
+        };
+
+        // Run callback only for commands that use it
+        match self {
+            Self::Build(cmd) => cmd.callback(&config),
+            Self::Run(cmd) => cmd.callback(&config),
+            Self::Test(cmd) => cmd.callback(&config),
+            Self::New(cmd) => cmd.callback(),
+            _ => (),
+        }
+    }
 }
 
 impl RemainingArgs {
@@ -202,6 +257,19 @@ impl RemainingArgs {
         } else {
             (&self.args[..], &[])
         }
+    }
+}
+
+impl Build {
+    /// Callback for `cargo 3ds build`.
+    ///
+    /// This callback handles building the application as a `.3dsx` file.
+    fn callback(&self, config: &CTRConfig) {
+        eprintln!("Building smdh:{}", config.path_smdh().display());
+        build_smdh(config);
+
+        eprintln!("Building 3dsx: {}", config.path_3dsx().display());
+        build_3dsx(config);
     }
 }
 
@@ -226,7 +294,7 @@ impl Run {
             args.push("--server".to_string());
         }
 
-        let exe_args = self.cargo_args.exe_args();
+        let exe_args = self.build_args.cargo_args.exe_args();
         if !exe_args.is_empty() {
             // For some reason 3dslink seems to want 2 instances of `--`, one
             // in front of all of the args like this...
@@ -245,6 +313,97 @@ impl Run {
         }
 
         args
+    }
+
+    /// Callback for `cargo 3ds run`.
+    ///
+    /// This callback handles launching the application via `3dslink`.
+    fn callback(&self, config: &CTRConfig) {
+        // Run the normal "build" callback
+        self.build_args.callback(config);
+
+        eprintln!("Running 3dslink");
+        link(config, self);
+    }
+}
+
+impl Test {
+    /// Callback for `cargo 3ds test`.
+    ///
+    /// This callback handles launching the application via `3dslink`.
+    fn callback(&self, config: &CTRConfig) {
+        if self.no_run {
+            // If the tests don't have to run, use the "build" callback
+            self.run_args.build_args.callback(config)
+        } else {
+            // If the tests have to run, use the "run" callback
+            self.run_args.callback(config)
+        }
+    }
+}
+
+const TOML_CHANGES: &str = "ctru-rs = { git = \"https://github.com/rust3ds/ctru-rs\"}
+
+[package.metadata.cargo-3ds]
+romfs_dir = \"romfs\"
+";
+
+const CUSTOM_MAIN_RS: &str = "use ctru::prelude::*;
+
+fn main() {
+    ctru::use_panic_handler();
+
+    let apt = Apt::new().unwrap();
+    let mut hid = Hid::new().unwrap();
+    let gfx = Gfx::new().unwrap();
+    let _console = Console::new(gfx.top_screen.borrow_mut());
+
+    println!(\"Hello, World!\");
+    println!(\"\\x1b[29;16HPress Start to exit\");
+
+    while apt.main_loop() {
+        gfx.wait_for_vblank();
+
+        hid.scan_input();
+        if hid.keys_down().contains(KeyPad::START) {
+            break;
+        }
+    }
+}
+";
+
+impl New {
+    /// Callback for `cargo 3ds new`.
+    ///
+    /// This callback handles the custom environment modifications when creating a new 3DS project.
+    fn callback(&self) {
+        // Commmit changes to the project only if is meant to be a binary
+        if self.cargo_args.args.contains(&"--lib".to_string()) {
+            return;
+        }
+
+        // Attain a canonicalised path for the new project and it's TOML manifest
+        let project_path = fs::canonicalize(&self.path).unwrap();
+        let toml_path = project_path.join("Cargo.toml");
+        let romfs_path = project_path.join("romfs");
+        let main_rs_path = project_path.join("src/main.rs");
+
+        // Create the "romfs" directory
+        fs::create_dir(romfs_path).unwrap();
+
+        // Read the contents of `Cargo.toml` to a string
+        let mut buf = String::new();
+        fs::File::open(&toml_path)
+            .unwrap()
+            .read_to_string(&mut buf)
+            .unwrap();
+
+        // Add the custom changes to the TOML
+        let buf = buf + TOML_CHANGES;
+        fs::write(&toml_path, buf).unwrap();
+
+        // Add the custom changes to the main.rs file
+        fs::write(main_rs_path, CUSTOM_MAIN_RS).unwrap();
     }
 }
 
@@ -281,8 +440,10 @@ mod tests {
         ];
 
         for (args, expected) in CASES {
-            let mut cmd = CargoCmd::Build(RemainingArgs {
-                args: args.iter().map(ToString::to_string).collect(),
+            let mut cmd = CargoCmd::Build(Build {
+                cargo_args: RemainingArgs {
+                    args: args.iter().map(ToString::to_string).collect(),
+                },
             });
 
             assert_eq!(
@@ -290,8 +451,8 @@ mod tests {
                 expected.map(ToString::to_string)
             );
 
-            if let CargoCmd::Build(args) = cmd {
-                assert_eq!(args.args, vec!["--foo", "bar"]);
+            if let CargoCmd::Build(build) = cmd {
+                assert_eq!(build.cargo_args.args, vec!["--foo", "bar"]);
             } else {
                 unreachable!();
             }
@@ -301,8 +462,10 @@ mod tests {
     #[test]
     fn extract_format_err() {
         for args in [&["--message-format=foo"][..], &["--message-format", "foo"]] {
-            let mut cmd = CargoCmd::Build(RemainingArgs {
-                args: args.iter().map(ToString::to_string).collect(),
+            let mut cmd = CargoCmd::Build(Build {
+                cargo_args: RemainingArgs {
+                    args: args.iter().map(ToString::to_string).collect(),
+                },
             });
 
             assert!(cmd.extract_message_format().is_err());
@@ -339,11 +502,11 @@ mod tests {
                 expected_exe: &["bar"],
             },
         ] {
-            let Run { cargo_args, .. } =
+            let Run { build_args, .. } =
                 Run::parse_from(std::iter::once(&"run").chain(param.input));
 
-            assert_eq!(cargo_args.cargo_args(), param.expected_cargo);
-            assert_eq!(cargo_args.exe_args(), param.expected_exe);
+            assert_eq!(build_args.cargo_args.cargo_args(), param.expected_cargo);
+            assert_eq!(build_args.cargo_args.exe_args(), param.expected_exe);
         }
     }
 }
