@@ -124,7 +124,7 @@ pub struct Test {
 
 #[derive(Parser, Debug)]
 pub struct New {
-    /// If set, the built executable will not be sent to the device to run it.
+    /// Path of the new project.
     #[arg(required = true)]
     pub path: String,
 
