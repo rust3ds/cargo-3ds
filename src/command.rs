@@ -112,6 +112,11 @@ pub struct Test {
     #[arg(long)]
     pub no_run: bool,
 
+    /// If set, documentation tests will be built instead of unit tests.
+    /// This implies `--no-run`.
+    #[arg(long)]
+    pub doc: bool,
+
     // The test command uses a superset of the same arguments as Run.
     #[command(flatten)]
     pub run_args: Run,
@@ -135,10 +140,23 @@ impl CargoCmd {
             CargoCmd::Build(build) => build.cargo_args.cargo_args(),
             CargoCmd::Run(run) => run.build_args.cargo_args.cargo_args(),
             CargoCmd::Test(test) => {
-                // We can't run 3DS executables on the host, so pass "--no-run" here and
-                // send the executable with 3dslink later, if the user wants
                 let mut cargo_args = test.run_args.build_args.cargo_args.cargo_args();
-                cargo_args.push("--no-run".to_string());
+
+                // We can't run 3DS executables on the host, so unconditionally pass
+                // --no-run here and send the executable with 3dslink later, if the
+                // user wants
+                if test.doc {
+                    eprintln!("Documentation tests requested, no 3dsx will be built or run");
+
+                    // https://github.com/rust-lang/cargo/issues/7040
+                    cargo_args.append(&mut vec![
+                        "--doc".to_string(),
+                        "-Z".to_string(),
+                        "doctest-xcompile".to_string(),
+                    ]);
+                } else {
+                    cargo_args.push("--no-run".to_string());
+                }
 
                 cargo_args
             }
@@ -198,10 +216,11 @@ impl CargoCmd {
 
     pub fn extract_message_format(&mut self) -> Result<Option<String>, String> {
         let cargo_args = match self {
-            Self::Build(args) => &mut args.args,
-            Self::Run(run) => &mut run.cargo_args.args,
+            Self::Build(build) => &mut build.cargo_args.args,
+            Self::Run(run) => &mut run.build_args.cargo_args.args,
+            Self::New(new) => &mut new.cargo_args.args,
+            Self::Test(test) => &mut test.run_args.build_args.cargo_args.args,
             Self::Passthrough(args) => args,
-            Self::Test(test) => &mut test.run_args.cargo_args.args,
         };
 
         let format = Self::extract_message_format_from_args(cargo_args)?;

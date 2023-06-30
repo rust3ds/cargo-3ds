@@ -84,6 +84,16 @@ pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Co
         }
     }
 
+    if matches!(cmd, CargoCmd::Test(_)) {
+        // Cargo doesn't like --no-run for doctests:
+        // https://github.com/rust-lang/rust/issues/87022
+        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
+            // TODO: should we make this output directory depend on profile etc?
+            + " --no-run --persist-doctests target/doctests";
+
+        command.env("RUSTDOCFLAGS", rustdoc_flags);
+    }
+
     let cargo_args = cmd.cargo_args();
 
     command
