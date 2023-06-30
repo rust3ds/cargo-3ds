@@ -21,11 +21,7 @@ use std::{env, io, process};
 /// For commands that produce an executable output, this function will build the
 /// `.elf` binary that can be used to create other 3ds files.
 pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
-    let mut command = if cmd.should_compile() {
-        make_cargo_build_command(cmd, &message_format)
-    } else {
-        make_cargo_generic_command(cmd)
-    };
+    let mut command = make_cargo_command(cmd, &message_format);
 
     let mut process = command.spawn().unwrap();
     let command_stdout = process.stdout.take().unwrap();
@@ -58,98 +54,37 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
     (process.wait().unwrap(), messages)
 }
 
-/// Create a cargo command used for building based on the context.
-/// If there is no pre-built std detected in the sysroot, `build-std` is used.
-pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
+/// Create a cargo command based on the context.
+///
+/// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
+/// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
+pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let sysroot = find_sysroot();
     let mut command = Command::new(cargo);
 
-    let cmd_str = match cmd {
-        CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
-        CargoCmd::Test(_) => "test",
-        CargoCmd::Passthrough(cmd) => &cmd[0],
-        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
-    };
+    command.arg(cmd.subcommand_name());
 
-    command
-        .arg(cmd_str)
-        .arg("--target")
-        .arg("armv6k-nintendo-3ds")
-        .arg("--message-format")
-        .arg(
-            message_format
-                .as_deref()
-                .unwrap_or(CargoCmd::DEFAULT_MESSAGE_FORMAT),
-        );
+    // Any command that needs to compile code will run under this environment.
+    // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
+    if cmd.should_compile() {
+        command
+            .arg("--target")
+            .arg("armv6k-nintendo-3ds")
+            .arg("--message-format")
+            .arg(
+                message_format
+                    .as_deref()
+                    .unwrap_or(CargoCmd::DEFAULT_MESSAGE_FORMAT),
+            );
 
-    if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
-        eprintln!("No pre-built std found, using build-std");
-        command.arg("-Z").arg("build-std");
+        let sysroot = find_sysroot();
+        if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
+            eprintln!("No pre-build std found, using build-std");
+            command.arg("-Z").arg("build-std");
+        }
     }
 
-    let cargo_args = match cmd {
-        CargoCmd::Build(build) => build.cargo_args.cargo_args(),
-        CargoCmd::Run(run) => run.build_args.cargo_args.cargo_args(),
-        CargoCmd::Test(test) => {
-            // We can't run 3DS executables on the host, so unconditionally pass
-            // --no-run here and send the executable with 3dslink later, if the
-            // user wants
-
-            if test.doc {
-                eprintln!("Documentation tests requested, no 3dsx will be built or run");
-
-                // https://github.com/rust-lang/cargo/issues/7040
-                command.args(["--doc", "-Z", "doctest-xcompile"]);
-
-                // Cargo doesn't like --no-run for doctests:
-                // https://github.com/rust-lang/rust/issues/87022
-                let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
-                    // TODO: should we make this output directory depend on profile etc?
-                    + " --no-run --persist-doctests target/doctests";
-
-                command.env("RUSTDOCFLAGS", rustdoc_flags);
-            } else {
-                command.arg("--no-run");
-            }
-
-            test.run_args.cargo_args.cargo_args()
-        }
-        CargoCmd::Passthrough(other) => &other[1..],
-        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
-    };
-
-    command
-        .args(cargo_args)
-        .stdout(Stdio::piped())
-        .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    command
-}
-
-/// Create a cargo command used for generic purposes based on the context.
-pub fn make_cargo_generic_command(cmd: &CargoCmd) -> Command {
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let mut command = Command::new(cargo);
-
-    let cmd_str = match cmd {
-        CargoCmd::New(_) => "new",
-        _ => panic!("tried to run an unsupported generic cargo subcommand"),
-    };
-
-    command.arg(cmd_str);
-
-    let cargo_args = match cmd {
-        CargoCmd::New(new) => {
-            println!("{}", new.path);
-
-            command.arg(&new.path);
-
-            new.cargo_args.cargo_args()
-        }
-        _ => panic!("tried to build an executable using an unsupported cargo subcommand"),
-    };
+    let cargo_args = cmd.cargo_args();
 
     command
         .args(cargo_args)

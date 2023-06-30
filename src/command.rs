@@ -129,6 +129,45 @@ pub struct New {
 }
 
 impl CargoCmd {
+    /// Returns the additional arguments run by the "official" cargo subcommand.
+    pub fn cargo_args(&self) -> Vec<String> {
+        match self {
+            CargoCmd::Build(build) => build.cargo_args.cargo_args(),
+            CargoCmd::Run(run) => run.build_args.cargo_args.cargo_args(),
+            CargoCmd::Test(test) => {
+                // We can't run 3DS executables on the host, so pass "--no-run" here and
+                // send the executable with 3dslink later, if the user wants
+                let mut cargo_args = test.run_args.build_args.cargo_args.cargo_args();
+                cargo_args.push("--no-run".to_string());
+
+                cargo_args
+            }
+            CargoCmd::New(new) => {
+                // We push the original path in the new command (we captured it in [`New`] to learn about the context)
+                let mut cargo_args = new.cargo_args.cargo_args();
+                cargo_args.push(new.path.clone());
+
+                cargo_args
+            }
+            CargoCmd::Passthrough(other) => other.clone().split_off(1),
+        }
+    }
+
+    /// Returns the cargo subcommand run by `cargo-3ds` when handling a [`CargoCmd`].
+    ///
+    /// # Notes
+    ///
+    /// This is not equivalent to the lowercase name of the [`CargoCmd`] variant.
+    /// Commands may use different commands under the hood to function (e.g. [`CargoCmd::Run`] uses `build`).
+    pub fn subcommand_name(&self) -> &str {
+        match self {
+            CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
+            CargoCmd::Test(_) => "test",
+            CargoCmd::New(_) => "new",
+            CargoCmd::Passthrough(cmd) => &cmd[0],
+        }
+    }
+
     /// Whether or not this command should compile any code, and thus needs import the custom environment configuration (e.g. target spec).
     pub fn should_compile(&self) -> bool {
         matches!(
@@ -221,6 +260,7 @@ impl CargoCmd {
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
     pub fn run_callback(&self, messages: &[Message]) {
+        // Process the metadata only for commands that have it/use it
         let config = if self.should_build_3dsx() {
             eprintln!("Getting metadata");
 
@@ -242,20 +282,24 @@ impl CargoCmd {
 
 impl RemainingArgs {
     /// Get the args to be passed to the executable itself (not `cargo`).
-    pub fn cargo_args(&self) -> &[String] {
+    pub fn cargo_args(&self) -> Vec<String> {
         self.split_args().0
     }
 
     /// Get the args to be passed to the executable itself (not `cargo`).
-    pub fn exe_args(&self) -> &[String] {
+    pub fn exe_args(&self) -> Vec<String> {
         self.split_args().1
     }
 
-    fn split_args(&self) -> (&[String], &[String]) {
-        if let Some(split) = self.args.iter().position(|s| s == "--") {
-            self.args.split_at(split + 1)
+    fn split_args(&self) -> (Vec<String>, Vec<String>) {
+        let mut args = self.args.clone();
+
+        if let Some(split) = args.iter().position(|s| s == "--") {
+            let second_half = args.split_off(split + 1);
+
+            (args, second_half)
         } else {
-            (&self.args[..], &[])
+            (args, Vec::new())
         }
     }
 }
