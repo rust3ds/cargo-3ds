@@ -14,6 +14,8 @@ Commands:
           Builds an executable and sends it to a device with `3dslink`
   test
           Builds a test executable and sends it to a device with `3dslink`
+  new
+          Sets up a new cargo project suitable to run on a 3DS
   help
           Print this message or the help of the given subcommand(s)
 
@@ -38,6 +40,7 @@ with the proper `--target armv6k-nintendo-3ds` set.
 * `cargo 3ds check --verbose`
 * `cargo 3ds run --release --example foo`
 * `cargo 3ds test --no-run`
+* `cargo 3ds new my-new-project --edition 2021`
 
 ### Running executables
 
