@@ -1,0 +1,36 @@
+name: Setup
+description: Set up CI environment for Rust + 3DS development
+
+inputs:
+  toolchain:
+    description: The Rust toolchain to use for the steps
+    required: true
+    default: nightly
+
+runs:
+  using: composite
+  steps:
+    # https://github.com/nektos/act/issues/917#issuecomment-1074421318
+    - if: ${{ env.ACT }}
+      shell: bash
+      name: Hack container for local development
+      run: |
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+
+    - name: Setup default Rust toolchain
+      # Use this helper action so we get matcher support
+      # https://github.com/actions-rust-lang/setup-rust-toolchain/pull/15
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy, rustfmt, rust-src
+        toolchain: ${{ inputs.toolchain }}
+
+    - name: Install build tools for host
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y build-essential
+
+    - name: Set PATH to include devkitARM
+      shell: bash
+      # For some reason devkitARM/bin is not part of the default PATH in the container
+      run: echo "${DEVKITARM}/bin" >> $GITHUB_PATH
