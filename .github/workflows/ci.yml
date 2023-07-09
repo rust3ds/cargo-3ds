@@ -20,13 +20,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
-          # Run against a "known good" nightly
-          - nightly-2023-01-13
-          # Check for breakage on latest nightly
-          - nightly
+          - stable
 
-    # But if latest nightly fails, allow the workflow to continue
-    continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm
     steps:
@@ -37,21 +32,11 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
 
-      - name: Hide duplicate warnings from lint job
-        if: ${{ matrix.toolchain == 'nightly' }}
-        run: |
-          echo "::remove-matcher owner=clippy::"
-          echo "::remove-matcher owner=rustfmt::"
-
       - name: Check formatting
         run: cargo fmt --all --verbose -- --check
 
       - name: Cargo check
-        run: cargo 3ds clippy --color=always --verbose --all-targets
-        # --deny=warnings would be nice, but can easily break CI for new clippy
-        # lints getting added. I'd also like to use Github's "inline warnings"
-        # feature, but https://github.com/actions/runner/issues/2341 means we
-        # can't have both that *and* colored output.
+        run: cargo clippy --color=always --verbose --all-targets
 
   project-build:
     strategy:
@@ -59,6 +44,7 @@ jobs:
         toolchain:
           - nightly-2023-01-13
           - nightly
+
     continue-on-error: ${{ matrix.toolchain == 'nightly' }}
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm
@@ -69,9 +55,6 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           toolchain: ${{ matrix.toolchain }}
-
-      - name: Hide duplicated warnings from lint job
-        run: echo "::remove-matcher owner=clippy::"
       
       - name: Install cargo-3ds
         uses: actions-rs/cargo@v1
