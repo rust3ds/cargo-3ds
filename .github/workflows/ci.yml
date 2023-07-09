@@ -42,6 +42,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
+          # Oldest supported nightly
+          - nightly-2023-05-31
           - nightly
 
     continue-on-error: ${{ matrix.toolchain == 'nightly' }}
