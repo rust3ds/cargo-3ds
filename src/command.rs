@@ -405,7 +405,7 @@ impl Test {
     }
 }
 
-const TOML_CHANGES: &str = "ctru-rs = { git = \"https://github.com/rust3ds/ctru-rs\"}
+const TOML_CHANGES: &str = "ctru-rs = { git = \"https://github.com/rust3ds/ctru-rs\" }
 
 [package.metadata.cargo-3ds]
 romfs_dir = \"romfs\"
