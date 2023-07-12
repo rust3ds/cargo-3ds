@@ -1,6 +1,6 @@
 pub mod command;
 
-use crate::command::CargoCmd;
+use crate::command::{CargoCmd, Run};
 
 use cargo_metadata::{Message, MetadataCommand};
 use command::Test;
@@ -21,7 +21,8 @@ use std::{env, io, process};
 /// For commands that produce an executable output, this function will build the
 /// `.elf` binary that can be used to create other 3ds files.
 pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
-    let mut command = make_cargo_build_command(cmd, &message_format);
+    let mut command = make_cargo_command(cmd, &message_format);
+
     let mut process = command.spawn().unwrap();
     let command_stdout = process.stdout.take().unwrap();
 
@@ -53,70 +54,47 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
     (process.wait().unwrap(), messages)
 }
 
-/// Create the cargo build command, but don't execute it.
-/// If there is no pre-built std detected in the sysroot, `build-std` is used.
-pub fn make_cargo_build_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
-    let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
-        + &format!(
-            " -L{}/libctru/lib -lctru",
-            env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
-        );
+/// Create a cargo command based on the context.
+///
+/// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
+/// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
+pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let sysroot = find_sysroot();
     let mut command = Command::new(cargo);
 
-    let cmd_str = match cmd {
-        CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
-        CargoCmd::Test(_) => "test",
-        CargoCmd::Passthrough(cmd) => &cmd[0],
-    };
+    command.arg(cmd.subcommand_name());
 
-    command
-        .env("RUSTFLAGS", rust_flags)
-        .arg(cmd_str)
-        .arg("--target")
-        .arg("armv6k-nintendo-3ds")
-        .arg("--message-format")
-        .arg(
-            message_format
-                .as_deref()
-                .unwrap_or(CargoCmd::DEFAULT_MESSAGE_FORMAT),
-        );
+    // Any command that needs to compile code will run under this environment.
+    // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
+    if cmd.should_compile() {
+        command
+            .arg("--target")
+            .arg("armv6k-nintendo-3ds")
+            .arg("--message-format")
+            .arg(
+                message_format
+                    .as_deref()
+                    .unwrap_or(CargoCmd::DEFAULT_MESSAGE_FORMAT),
+            );
 
-    if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
-        eprintln!("No pre-built std found, using build-std");
-        command.arg("-Z").arg("build-std");
+        let sysroot = find_sysroot();
+        if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
+            eprintln!("No pre-build std found, using build-std");
+            command.arg("-Z").arg("build-std");
+        }
     }
 
-    let cargo_args = match cmd {
-        CargoCmd::Build(cargo_args) => cargo_args.cargo_args(),
-        CargoCmd::Run(run) => run.cargo_args.cargo_args(),
-        CargoCmd::Test(test) => {
-            // We can't run 3DS executables on the host, so unconditionally pass
-            // --no-run here and send the executable with 3dslink later, if the
-            // user wants
+    if matches!(cmd, CargoCmd::Test(_)) {
+        // Cargo doesn't like --no-run for doctests:
+        // https://github.com/rust-lang/rust/issues/87022
+        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
+            // TODO: should we make this output directory depend on profile etc?
+            + " --no-run --persist-doctests target/doctests";
 
-            if test.doc {
-                eprintln!("Documentation tests requested, no 3dsx will be built or run");
+        command.env("RUSTDOCFLAGS", rustdoc_flags);
+    }
 
-                // https://github.com/rust-lang/cargo/issues/7040
-                command.args(["--doc", "-Z", "doctest-xcompile"]);
-
-                // Cargo doesn't like --no-run for doctests:
-                // https://github.com/rust-lang/rust/issues/87022
-                let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
-                    // TODO: should we make this output directory depend on profile etc?
-                    + " --no-run --persist-doctests target/doctests";
-
-                command.env("RUSTDOCFLAGS", rustdoc_flags);
-            } else {
-                command.arg("--no-run");
-            }
-
-            test.run_args.cargo_args.cargo_args()
-        }
-        CargoCmd::Passthrough(other) => &other[1..],
-    };
+    let cargo_args = cmd.cargo_args();
 
     command
         .args(cargo_args)
@@ -180,7 +158,7 @@ pub fn check_rust_version() {
     }
 }
 
-/// Parses messages returned by the executed cargo command from [`build_elf`].
+/// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
 /// The returned [`CTRConfig`] is then used for further building in and execution
 /// in [`build_smdh`], [`build_3dsx`], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
@@ -309,13 +287,7 @@ pub fn build_3dsx(config: &CTRConfig) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig, cmd: &CargoCmd) {
-    let run_args = match cmd {
-        CargoCmd::Run(run) => run,
-        CargoCmd::Test(test) => &test.run_args,
-        _ => unreachable!(),
-    };
-
+pub fn link(config: &CTRConfig, run_args: &Run) {
     let mut process = Command::new("3dslink")
         .arg(config.path_3dsx())
         .args(run_args.get_3dslink_args())
@@ -410,8 +382,8 @@ impl fmt::Display for CommitDate {
 }
 
 const MINIMUM_COMMIT_DATE: CommitDate = CommitDate {
-    year: 2022,
-    month: 6,
-    day: 15,
+    year: 2023,
+    month: 5,
+    day: 31,
 };
-const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 63, 0);
+const MINIMUM_RUSTC_VERSION: Version = Version::new(1, 70, 0);

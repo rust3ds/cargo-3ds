@@ -1,5 +1,5 @@
 use cargo_3ds::command::Cargo;
-use cargo_3ds::{build_3dsx, build_smdh, check_rust_version, get_metadata, link, run_cargo};
+use cargo_3ds::{check_rust_version, run_cargo};
 
 use clap::Parser;
 
@@ -24,21 +24,5 @@ fn main() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    if !input.cmd.should_build_3dsx() {
-        return;
-    }
-
-    eprintln!("Getting metadata");
-    let app_conf = get_metadata(&messages);
-
-    eprintln!("Building smdh:{}", app_conf.path_smdh().display());
-    build_smdh(&app_conf);
-
-    eprintln!("Building 3dsx: {}", app_conf.path_3dsx().display());
-    build_3dsx(&app_conf);
-
-    if input.cmd.should_link_to_device() {
-        eprintln!("Running 3dslink");
-        link(&app_conf, &input.cmd);
-    }
+    input.cmd.run_callback(&messages);
 }
