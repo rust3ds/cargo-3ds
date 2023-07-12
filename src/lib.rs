@@ -136,7 +136,7 @@ pub fn check_rust_version() {
     }
 
     let old_version = MINIMUM_RUSTC_VERSION
-        >= Version {
+        > Version {
             // Remove `-nightly` pre-release tag for comparison.
             pre: semver::Prerelease::EMPTY,
             ..rustc_version.semver.clone()
@@ -146,7 +146,7 @@ pub fn check_rust_version() {
         None => false,
         Some(date) => {
             MINIMUM_COMMIT_DATE
-                >= CommitDate::parse(&date).expect("could not parse `rustc --version` commit date")
+                > CommitDate::parse(&date).expect("could not parse `rustc --version` commit date")
         }
     };
 
