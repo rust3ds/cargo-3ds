@@ -3,7 +3,9 @@ name = "cargo-3ds"
 version = "0.1.0"
 authors = [ "Rust3DS Org", "Andrea Ciliberti <meziu210@icloud.com>" ]
 description = "Cargo wrapper for developing Nintendo 3DS homebrew apps"
-repository = "https://github.com/Meziu/cargo-3ds"
+repository = "https://github.com/rust3ds/cargo-3ds"
+keywords = ["3ds", "homebrew"]
+categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
 
