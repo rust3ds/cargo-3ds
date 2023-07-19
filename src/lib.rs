@@ -60,6 +60,7 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
 /// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
 pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+
     let mut command = Command::new(cargo);
 
     command.arg(cmd.subcommand_name());
@@ -67,7 +68,14 @@ pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Co
     // Any command that needs to compile code will run under this environment.
     // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
     if cmd.should_compile() {
+        let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
+            + &format!(
+                " -L{}/libctru/lib -lctru",
+                env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
+            );
+
         command
+            .env("RUSTFLAGS", rust_flags)
             .arg("--target")
             .arg("armv6k-nintendo-3ds")
             .arg("--message-format")
