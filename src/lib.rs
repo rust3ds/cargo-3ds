@@ -62,7 +62,6 @@ pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Co
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
     let mut command = Command::new(cargo);
-
     command.arg(cmd.subcommand_name());
 
     // Any command that needs to compile code will run under this environment.
