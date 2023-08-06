@@ -292,9 +292,9 @@ impl CargoCmd {
         let config = if self.should_build_3dsx() {
             eprintln!("Getting metadata");
 
-            get_metadata(messages)
+            Some(get_metadata(messages))
         } else {
-            CTRConfig::default()
+            None
         };
 
         // Run callback only for commands that use it
@@ -336,12 +336,14 @@ impl Build {
     /// Callback for `cargo 3ds build`.
     ///
     /// This callback handles building the application as a `.3dsx` file.
-    fn callback(&self, config: &CTRConfig, verbose: bool) {
-        eprintln!("Building smdh: {}", config.path_smdh().display());
-        build_smdh(config, verbose);
+    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
+        if let Some(config) = config {
+            eprintln!("Building smdh: {}", config.path_smdh().display());
+            build_smdh(config, verbose);
 
-        eprintln!("Building 3dsx: {}", config.path_3dsx().display());
-        build_3dsx(config, verbose);
+            eprintln!("Building 3dsx: {}", config.path_3dsx().display());
+            build_3dsx(config, verbose);
+        }
     }
 }
 
@@ -390,12 +392,14 @@ impl Run {
     /// Callback for `cargo 3ds run`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &CTRConfig, verbose: bool) {
+    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
         // Run the normal "build" callback
         self.build_args.callback(config, verbose);
 
-        eprintln!("Running 3dslink");
-        link(config, self, verbose);
+        if let Some(cfg) = config {
+            eprintln!("Running 3dslink");
+            link(cfg, self, verbose);
+        }
     }
 }
 
@@ -403,13 +407,13 @@ impl Test {
     /// Callback for `cargo 3ds test`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &CTRConfig, verbose: bool) {
+    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
         if self.no_run {
             // If the tests don't have to run, use the "build" callback
-            self.run_args.build_args.callback(config, verbose)
+            self.run_args.build_args.callback(config, verbose);
         } else {
             // If the tests have to run, use the "run" callback
-            self.run_args.callback(config, verbose)
+            self.run_args.callback(config, verbose);
         }
     }
 }
