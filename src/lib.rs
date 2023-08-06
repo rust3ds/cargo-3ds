@@ -3,7 +3,7 @@ pub mod command;
 use crate::command::{CargoCmd, Run};
 
 use cargo_metadata::{Message, MetadataCommand};
-use command::Test;
+use command::{Input, Test};
 use rustc_version::Channel;
 use semver::Version;
 use serde::Deserialize;
@@ -20,8 +20,12 @@ use std::{env, io, process};
 ///
 /// For commands that produce an executable output, this function will build the
 /// `.elf` binary that can be used to create other 3ds files.
-pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
-    let mut command = make_cargo_command(cmd, &message_format);
+pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
+    let mut command = make_cargo_command(&input.cmd, &message_format);
+
+    if input.verbose {
+        print_command(&command);
+    }
 
     let mut process = command.spawn().unwrap();
     let command_stdout = process.stdout.take().unwrap();
@@ -29,7 +33,7 @@ pub fn run_cargo(cmd: &CargoCmd, message_format: Option<String>) -> (ExitStatus,
     let mut tee_reader;
     let mut stdout_reader;
 
-    let buf_reader: &mut dyn BufRead = match (message_format, cmd) {
+    let buf_reader: &mut dyn BufRead = match (message_format, &input.cmd) {
         // The user presumably cares about the message format if set, so we should
         // copy stuff to stdout like they expect. We can still extract the executable
         // information out of it that we need for 3dsxtool etc.
@@ -110,6 +114,23 @@ pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Co
         .stderr(Stdio::inherit());
 
     command
+}
+
+fn print_command(command: &Command) {
+    let mut cmd_str = vec![command.get_program().to_string_lossy().to_string()];
+    cmd_str.extend(command.get_args().map(|s| s.to_string_lossy().to_string()));
+
+    eprintln!("Running command:");
+    for (k, v) in command.get_envs() {
+        let v = v.map(|v| v.to_string_lossy().to_string());
+        eprintln!(
+            "   {}={} \\",
+            k.to_string_lossy(),
+            v.map_or_else(String::new, |s| shlex::quote(&s).to_string())
+        );
+    }
+    eprintln!("   {}", shlex::join(cmd_str.iter().map(String::as_str)));
+    eprintln!();
 }
 
 /// Finds the sysroot path of the current toolchain
@@ -235,8 +256,9 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
 
 /// Builds the smdh using `smdhtool`.
 /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
-pub fn build_smdh(config: &CTRConfig) {
-    let mut process = Command::new("smdhtool")
+pub fn build_smdh(config: &CTRConfig, verbose: bool) {
+    let mut command = Command::new("smdhtool");
+    command
         .arg("--create")
         .arg(&config.name)
         .arg(&config.description)
@@ -245,7 +267,13 @@ pub fn build_smdh(config: &CTRConfig) {
         .arg(config.path_smdh())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    if verbose {
+        print_command(&command);
+    }
+
+    let mut process = command
         .spawn()
         .expect("smdhtool command failed, most likely due to 'smdhtool' not being in $PATH");
 
@@ -258,9 +286,9 @@ pub fn build_smdh(config: &CTRConfig) {
 
 /// Builds the 3dsx using `3dsxtool`.
 /// This will fail if `3dsxtool` is not within the running directory or in a directory found in $PATH
-pub fn build_3dsx(config: &CTRConfig) {
+pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
     let mut command = Command::new("3dsxtool");
-    let mut process = command
+    command
         .arg(&config.target_path)
         .arg(config.path_3dsx())
         .arg(format!("--smdh={}", config.path_smdh().to_string_lossy()));
@@ -269,7 +297,7 @@ pub fn build_3dsx(config: &CTRConfig) {
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
     if romfs_path.is_dir() {
         eprintln!("Adding RomFS from {}", romfs_path.display());
-        process = process.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
+        command.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
     } else if !is_default_romfs {
         eprintln!(
             "Could not find configured RomFS dir: {}",
@@ -278,7 +306,11 @@ pub fn build_3dsx(config: &CTRConfig) {
         process::exit(1);
     }
 
-    let mut process = process
+    if verbose {
+        print_command(&command);
+    }
+
+    let mut process = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -294,17 +326,20 @@ pub fn build_3dsx(config: &CTRConfig) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig, run_args: &Run) {
-    let mut process = Command::new("3dslink")
+pub fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
+    let mut command = Command::new("3dslink");
+    command
         .arg(config.path_3dsx())
         .args(run_args.get_3dslink_args())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::inherit());
 
-    let status = process.wait().unwrap();
+    if verbose {
+        print_command(&command);
+    }
+
+    let status = command.spawn().unwrap().wait().unwrap();
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
