@@ -1,6 +1,10 @@
 pub mod command;
 
-use crate::command::{CargoCmd, Run};
+use core::fmt;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
+use std::{env, io, process};
 
 use cargo_metadata::{Message, MetadataCommand};
 use command::{Input, Test};
@@ -9,11 +13,7 @@ use semver::Version;
 use serde::Deserialize;
 use tee::TeeReader;
 
-use core::fmt;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::{env, io, process};
+use crate::command::{CargoCmd, Run};
 
 /// Build a command using [`make_cargo_build_command`] and execute it,
 /// parsing and returning the messages from the spawned process.
@@ -21,7 +21,7 @@ use std::{env, io, process};
 /// For commands that produce an executable output, this function will build the
 /// `.elf` binary that can be used to create other 3ds files.
 pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
-    let mut command = make_cargo_command(&input.cmd, &message_format);
+    let mut command = make_cargo_command(input, &message_format);
 
     if input.verbose {
         print_command(&command);
@@ -62,11 +62,13 @@ pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, 
 ///
 /// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
 /// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
-pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Command {
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Command {
+    let cmd = &input.cmd;
 
-    let mut command = Command::new(cargo);
-    command.arg(cmd.subcommand_name());
+    let mut command = find_cargo();
+    command
+        .args(input.config.iter().map(|cfg| format!("--config={cfg}")))
+        .arg(cmd.subcommand_name());
 
     // Any command that needs to compile code will run under this environment.
     // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
@@ -91,29 +93,51 @@ pub fn make_cargo_command(cmd: &CargoCmd, message_format: &Option<String>) -> Co
         let sysroot = find_sysroot();
         if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
             eprintln!("No pre-build std found, using build-std");
+            // TODO: should we consider always building `test` ? It's always needed
+            // if e.g. `test-runner` is a dependency, but not necessarily needed for
+            // production code.
             command.arg("-Z").arg("build-std");
         }
     }
 
-    if matches!(cmd, CargoCmd::Test(_)) {
-        // Cargo doesn't like --no-run for doctests:
-        // https://github.com/rust-lang/rust/issues/87022
-        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default()
-            // TODO: should we make this output directory depend on profile etc?
-            + " --no-run --persist-doctests target/doctests";
+    let cargo_args = cmd.cargo_args();
+    command.args(cargo_args);
 
+    if let CargoCmd::Test(test) = cmd {
+        let no_run_flag = if test.run_args.is_runner_configured() {
+            // TODO: should we persist here as well? Or maybe just let the user
+            // add that to RUSTDOCFLAGS if they want it...
+            ""
+        } else {
+            " --no-run"
+        };
+
+        // Cargo doesn't like --no-run for doctests, so we have to plumb it in here
+        // https://github.com/rust-lang/rust/issues/87022
+        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default() + no_run_flag;
         command.env("RUSTDOCFLAGS", rustdoc_flags);
     }
 
-    let cargo_args = cmd.cargo_args();
+    if let CargoCmd::Run(run) | CargoCmd::Test(Test { run_args: run, .. }) = &cmd {
+        if run.is_runner_configured() {
+            command
+                .arg("--")
+                .args(run.build_args.passthrough.exe_args());
+        }
+    }
 
     command
-        .args(cargo_args)
         .stdout(Stdio::piped())
         .stdin(Stdio::inherit())
         .stderr(Stdio::inherit());
 
     command
+}
+
+/// Get the environment's version of cargo
+fn find_cargo() -> Command {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    Command::new(cargo)
 }
 
 fn print_command(command: &Command) {
@@ -129,8 +153,7 @@ fn print_command(command: &Command) {
             v.map_or_else(String::new, |s| shlex::quote(&s).to_string())
         );
     }
-    eprintln!("   {}", shlex::join(cmd_str.iter().map(String::as_str)));
-    eprintln!();
+    eprintln!("   {}\n", shlex::join(cmd_str.iter().map(String::as_str)));
 }
 
 /// Finds the sysroot path of the current toolchain

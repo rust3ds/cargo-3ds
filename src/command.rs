@@ -1,10 +1,12 @@
 use std::fs;
 use std::io::Read;
+use std::process::Stdio;
+use std::sync::OnceLock;
 
 use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, build_smdh, get_metadata, link, CTRConfig};
+use crate::{build_3dsx, build_smdh, find_cargo, get_metadata, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -20,9 +22,15 @@ pub struct Input {
     pub cmd: CargoCmd,
 
     /// Print the exact commands `cargo-3ds` is running. Note that this does not
-    /// set the verbose flag for cargo itself.
-    #[arg(long, short = 'v')]
+    /// set the verbose flag for cargo itself. To set cargo's verbose flag, add
+    /// `-- -v` to the end of the command line.
+    #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
+
+    /// Set cargo configuration on the command line. This is equivalent to
+    /// cargo's `--config` option.
+    #[arg(long, global = true)]
+    pub config: Vec<String>,
 }
 
 /// Run a cargo command. COMMAND will be forwarded to the real
@@ -67,21 +75,25 @@ pub struct RemainingArgs {
     /// used to disambiguate cargo arguments from executable arguments.
     /// For example, `cargo 3ds run -- -- xyz` runs an executable with the argument
     /// `xyz`.
-    #[arg(trailing_var_arg = true)]
-    #[arg(allow_hyphen_values = true)]
-    #[arg(global = true)]
-    #[arg(name = "CARGO_ARGS")]
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "CARGO_ARGS"
+    )]
     args: Vec<String>,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Build {
+    #[arg(from_global)]
+    pub verbose: bool,
+
     // Passthrough cargo options.
     #[command(flatten)]
-    pub cargo_args: RemainingArgs,
+    pub passthrough: RemainingArgs,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Run {
     /// Specify the IP address of the device to send the executable to.
     ///
@@ -109,16 +121,20 @@ pub struct Run {
     // Passthrough `cargo build` options.
     #[command(flatten)]
     pub build_args: Build,
+
+    #[arg(from_global)]
+    config: Vec<String>,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct Test {
     /// If set, the built executable will not be sent to the device to run it.
     #[arg(long)]
     pub no_run: bool,
 
     /// If set, documentation tests will be built instead of unit tests.
-    /// This implies `--no-run`.
+    /// This implies `--no-run`, unless Cargo's `target.armv6k-nintendo-3ds.runner`
+    /// is configured.
     #[arg(long)]
     pub doc: bool,
 
@@ -127,7 +143,7 @@ pub struct Test {
     pub run_args: Run,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Args, Debug)]
 pub struct New {
     /// Path of the new project.
     #[arg(required = true)]
@@ -142,16 +158,15 @@ impl CargoCmd {
     /// Returns the additional arguments run by the "official" cargo subcommand.
     pub fn cargo_args(&self) -> Vec<String> {
         match self {
-            CargoCmd::Build(build) => build.cargo_args.cargo_args(),
-            CargoCmd::Run(run) => run.build_args.cargo_args.cargo_args(),
+            CargoCmd::Build(build) => build.passthrough.cargo_args(),
+            CargoCmd::Run(run) => run.build_args.passthrough.cargo_args(),
             CargoCmd::Test(test) => {
-                let mut cargo_args = test.run_args.build_args.cargo_args.cargo_args();
+                let mut cargo_args = test.run_args.build_args.passthrough.cargo_args();
 
-                // We can't run 3DS executables on the host, so unconditionally pass
-                // --no-run here and send the executable with 3dslink later, if the
-                // user wants
+                // We can't run 3DS executables on the host, but we want to respect
+                // the user's "runner" configuration if set.
                 if test.doc {
-                    eprintln!("Documentation tests requested, no 3dsx will be built or run");
+                    eprintln!("Documentation tests requested, no 3dsx will be built");
 
                     // https://github.com/rust-lang/cargo/issues/7040
                     cargo_args.append(&mut vec![
@@ -163,7 +178,7 @@ impl CargoCmd {
                         "-Z".to_string(),
                         "build-std=std,test".to_string(),
                     ]);
-                } else {
+                } else if !test.run_args.is_runner_configured() {
                     cargo_args.push("--no-run".to_string());
                 }
 
@@ -185,10 +200,18 @@ impl CargoCmd {
     /// # Notes
     ///
     /// This is not equivalent to the lowercase name of the [`CargoCmd`] variant.
-    /// Commands may use different commands under the hood to function (e.g. [`CargoCmd::Run`] uses `build`).
+    /// Commands may use different commands under the hood to function (e.g. [`CargoCmd::Run`] uses `build`
+    /// if no custom runner is configured).
     pub fn subcommand_name(&self) -> &str {
         match self {
-            CargoCmd::Build(_) | CargoCmd::Run(_) => "build",
+            CargoCmd::Build(_) => "build",
+            CargoCmd::Run(run) => {
+                if run.is_runner_configured() {
+                    "run"
+                } else {
+                    "build"
+                }
+            }
             CargoCmd::Test(_) => "test",
             CargoCmd::New(_) => "new",
             CargoCmd::Passthrough(cmd) => &cmd[0],
@@ -215,8 +238,8 @@ impl CargoCmd {
     /// `3dslink`.
     pub fn should_link_to_device(&self) -> bool {
         match self {
-            Self::Test(test) => !test.no_run,
-            Self::Run(_) => true,
+            Self::Test(test) => !(test.no_run || test.run_args.is_runner_configured()),
+            Self::Run(run) => !run.is_runner_configured(),
             _ => false,
         }
     }
@@ -225,10 +248,10 @@ impl CargoCmd {
 
     pub fn extract_message_format(&mut self) -> Result<Option<String>, String> {
         let cargo_args = match self {
-            Self::Build(build) => &mut build.cargo_args.args,
-            Self::Run(run) => &mut run.build_args.cargo_args.args,
+            Self::Build(build) => &mut build.passthrough.args,
+            Self::Run(run) => &mut run.build_args.passthrough.args,
             Self::New(new) => &mut new.cargo_args.args,
-            Self::Test(test) => &mut test.run_args.build_args.cargo_args.args,
+            Self::Test(test) => &mut test.run_args.build_args.passthrough.args,
             Self::Passthrough(args) => args,
         };
 
@@ -287,7 +310,7 @@ impl CargoCmd {
     ///
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
-    pub fn run_callback(&self, messages: &[Message], verbose: bool) {
+    pub fn run_callback(&self, messages: &[Message]) {
         // Process the metadata only for commands that have it/use it
         let config = if self.should_build_3dsx() {
             eprintln!("Getting metadata");
@@ -299,9 +322,9 @@ impl CargoCmd {
 
         // Run callback only for commands that use it
         match self {
-            Self::Build(cmd) => cmd.callback(&config, verbose),
-            Self::Run(cmd) => cmd.callback(&config, verbose),
-            Self::Test(cmd) => cmd.callback(&config, verbose),
+            Self::Build(cmd) => cmd.callback(&config),
+            Self::Run(cmd) => cmd.callback(&config),
+            Self::Test(cmd) => cmd.callback(&config),
             Self::New(cmd) => cmd.callback(),
             _ => (),
         }
@@ -309,7 +332,7 @@ impl CargoCmd {
 }
 
 impl RemainingArgs {
-    /// Get the args to be passed to the executable itself (not `cargo`).
+    /// Get the args to be passed to `cargo`.
     pub fn cargo_args(&self) -> Vec<String> {
         self.split_args().0
     }
@@ -324,6 +347,8 @@ impl RemainingArgs {
 
         if let Some(split) = args.iter().position(|s| s == "--") {
             let second_half = args.split_off(split + 1);
+            // take off the "--" arg we found
+            args.pop();
 
             (args, second_half)
         } else {
@@ -336,13 +361,13 @@ impl Build {
     /// Callback for `cargo 3ds build`.
     ///
     /// This callback handles building the application as a `.3dsx` file.
-    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
+    fn callback(&self, config: &Option<CTRConfig>) {
         if let Some(config) = config {
             eprintln!("Building smdh: {}", config.path_smdh().display());
-            build_smdh(config, verbose);
+            build_smdh(config, self.verbose);
 
             eprintln!("Building 3dsx: {}", config.path_3dsx().display());
-            build_3dsx(config, verbose);
+            build_3dsx(config, self.verbose);
         }
     }
 }
@@ -368,7 +393,7 @@ impl Run {
             args.push("--server".to_string());
         }
 
-        let exe_args = self.build_args.cargo_args.exe_args();
+        let exe_args = self.build_args.passthrough.exe_args();
         if !exe_args.is_empty() {
             // For some reason 3dslink seems to want 2 instances of `--`, one
             // in front of all of the args like this...
@@ -392,14 +417,59 @@ impl Run {
     /// Callback for `cargo 3ds run`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
+    fn callback(&self, config: &Option<CTRConfig>) {
         // Run the normal "build" callback
-        self.build_args.callback(config, verbose);
+        self.build_args.callback(config);
 
-        if let Some(cfg) = config {
-            eprintln!("Running 3dslink");
-            link(cfg, self, verbose);
+        if !self.is_runner_configured() {
+            if let Some(cfg) = config {
+                eprintln!("Running 3dslink");
+                link(cfg, self, self.build_args.verbose);
+            }
         }
+    }
+
+    /// Returns whether the cargo environment has `target.armv6k-nintendo-3ds.runner`
+    /// configured. This will only be checked once during the lifetime of the program,
+    /// and takes into account the usual ways Cargo looks for
+    /// [configuration](https://doc.rust-lang.org/cargo/reference/config.html):
+    ///
+    /// - `.cargo/config.toml`
+    /// - Environment variables
+    /// - Command-line `--config` overrides
+    pub fn is_runner_configured(&self) -> bool {
+        static HAS_RUNNER: OnceLock<bool> = OnceLock::new();
+
+        let has_runner = HAS_RUNNER.get_or_init(|| {
+            let mut cmd = find_cargo();
+
+            let config_args = self.config.iter().map(|cfg| format!("--config={cfg}"));
+
+            cmd.args(config_args)
+                .args([
+                    "config",
+                    "-Zunstable-options",
+                    "get",
+                    "target.armv6k-nintendo-3ds.runner",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+
+            if self.build_args.verbose {
+                print_command(&cmd);
+            }
+
+            cmd.status().map_or(false, |status| status.success())
+        });
+
+        if self.build_args.verbose {
+            eprintln!(
+                "Custom runner is {}configured",
+                if *has_runner { "" } else { "not " }
+            );
+        }
+
+        *has_runner
     }
 }
 
@@ -407,13 +477,13 @@ impl Test {
     /// Callback for `cargo 3ds test`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>, verbose: bool) {
+    fn callback(&self, config: &Option<CTRConfig>) {
         if self.no_run {
             // If the tests don't have to run, use the "build" callback
-            self.run_args.build_args.callback(config, verbose);
+            self.run_args.build_args.callback(config);
         } else {
             // If the tests have to run, use the "run" callback
-            self.run_args.callback(config, verbose);
+            self.run_args.callback(config);
         }
     }
 }
@@ -485,9 +555,9 @@ impl New {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use clap::CommandFactory;
+
+    use super::*;
 
     #[test]
     fn verify_app() {
@@ -517,9 +587,10 @@ mod tests {
 
         for (args, expected) in CASES {
             let mut cmd = CargoCmd::Build(Build {
-                cargo_args: RemainingArgs {
+                passthrough: RemainingArgs {
                     args: args.iter().map(ToString::to_string).collect(),
                 },
+                verbose: false,
             });
 
             assert_eq!(
@@ -528,7 +599,7 @@ mod tests {
             );
 
             if let CargoCmd::Build(build) = cmd {
-                assert_eq!(build.cargo_args.args, vec!["--foo", "bar"]);
+                assert_eq!(build.passthrough.args, vec!["--foo", "bar"]);
             } else {
                 unreachable!();
             }
@@ -539,9 +610,10 @@ mod tests {
     fn extract_format_err() {
         for args in [&["--message-format=foo"][..], &["--message-format", "foo"]] {
             let mut cmd = CargoCmd::Build(Build {
-                cargo_args: RemainingArgs {
+                passthrough: RemainingArgs {
                     args: args.iter().map(ToString::to_string).collect(),
                 },
+                verbose: false,
             });
 
             assert!(cmd.extract_message_format().is_err());
@@ -564,25 +636,37 @@ mod tests {
             },
             TestParam {
                 input: &["--example", "hello-world", "--", "--do-stuff", "foo"],
-                expected_cargo: &["--example", "hello-world", "--"],
+                expected_cargo: &["--example", "hello-world"],
                 expected_exe: &["--do-stuff", "foo"],
             },
             TestParam {
                 input: &["--lib", "--", "foo"],
-                expected_cargo: &["--lib", "--"],
+                expected_cargo: &["--lib"],
                 expected_exe: &["foo"],
             },
             TestParam {
                 input: &["foo", "--", "bar"],
-                expected_cargo: &["foo", "--"],
+                expected_cargo: &["foo"],
                 expected_exe: &["bar"],
             },
         ] {
-            let Run { build_args, .. } =
-                Run::parse_from(std::iter::once(&"run").chain(param.input));
+            let input: Vec<&str> = ["cargo", "3ds", "run"]
+                .iter()
+                .chain(param.input)
+                .copied()
+                .collect();
 
-            assert_eq!(build_args.cargo_args.cargo_args(), param.expected_cargo);
-            assert_eq!(build_args.cargo_args.exe_args(), param.expected_exe);
+            dbg!(&input);
+            let Cargo::Input(Input {
+                cmd: CargoCmd::Run(Run { build_args, .. }),
+                ..
+            }) = Cargo::try_parse_from(input).unwrap_or_else(|e| panic!("{e}"))
+            else {
+                panic!("parsed as something other than `run` subcommand")
+            };
+
+            assert_eq!(build_args.passthrough.cargo_args(), param.expected_cargo);
+            assert_eq!(build_args.passthrough.exe_args(), param.expected_exe);
         }
     }
 }
