@@ -2,6 +2,20 @@
 
 Cargo command to work with Nintendo 3DS project binaries. Based on cargo-psp.
 
+## Installation
+
+To install the latest release on <https://crates.io>:
+
+```sh
+cargo install --locked cargo-3ds
+```
+
+To install the current `master` version of `cargo-3ds`:
+
+```sh
+cargo install --locked --git https://github.com/rust3ds/cargo-3ds
+```
+
 ## Usage
 
 Use the nightly toolchain to build 3DS apps (either by using `rustup override nightly` for the project directory or by adding `+nightly` in the `cargo` invocation).

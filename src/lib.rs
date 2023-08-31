@@ -63,16 +63,14 @@ pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, 
 /// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
 /// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
 pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Command {
-    let cmd = &input.cmd;
+    let cargo_cmd = &input.cmd;
 
-    let mut command = find_cargo();
-    command
-        .args(input.config.iter().map(|cfg| format!("--config={cfg}")))
-        .arg(cmd.subcommand_name());
+    let mut command = cargo(&input.config);
+    command.arg(cargo_cmd.subcommand_name());
 
     // Any command that needs to compile code will run under this environment.
     // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
-    if cmd.should_compile() {
+    if cargo_cmd.should_compile() {
         let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
             + &format!(
                 " -L{}/libctru/lib -lctru",
@@ -93,33 +91,30 @@ pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Com
         let sysroot = find_sysroot();
         if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
             eprintln!("No pre-build std found, using build-std");
-            // TODO: should we consider always building `test` ? It's always needed
-            // if e.g. `test-runner` is a dependency, but not necessarily needed for
-            // production code.
-            command.arg("-Z").arg("build-std");
+            // Always building the test crate is not ideal, but we don't know if the
+            // crate being built uses #![feature(test)], so we build it just in case.
+            command.arg("-Z").arg("build-std=std,test");
         }
     }
 
-    let cargo_args = cmd.cargo_args();
-    command.args(cargo_args);
-
-    if let CargoCmd::Test(test) = cmd {
-        let no_run_flag = if test.run_args.is_runner_configured() {
-            // TODO: should we persist here as well? Or maybe just let the user
-            // add that to RUSTDOCFLAGS if they want it...
+    if let CargoCmd::Test(test) = cargo_cmd {
+        let no_run_flag = if test.run_args.use_custom_runner() {
             ""
         } else {
+            // We don't support running doctests by default, but cargo doesn't like
+            // --no-run for doctests, so we have to plumb it in via RUSTDOCFLAGS
             " --no-run"
         };
 
-        // Cargo doesn't like --no-run for doctests, so we have to plumb it in here
-        // https://github.com/rust-lang/rust/issues/87022
+        // RUSTDOCFLAGS is simply ignored if --doc wasn't passed, so we always set it.
         let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default() + no_run_flag;
         command.env("RUSTDOCFLAGS", rustdoc_flags);
     }
 
-    if let CargoCmd::Run(run) | CargoCmd::Test(Test { run_args: run, .. }) = &cmd {
-        if run.is_runner_configured() {
+    command.args(cargo_cmd.cargo_args());
+
+    if let CargoCmd::Run(run) | CargoCmd::Test(Test { run_args: run, .. }) = &cargo_cmd {
+        if run.use_custom_runner() {
             command
                 .arg("--")
                 .args(run.build_args.passthrough.exe_args());
@@ -134,10 +129,12 @@ pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Com
     command
 }
 
-/// Get the environment's version of cargo
-fn find_cargo() -> Command {
+/// Build a `cargo` command with the given `--config` flags.
+fn cargo(config: &[String]) -> Command {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    Command::new(cargo)
+    let mut cmd = Command::new(cargo);
+    cmd.args(config.iter().map(|cfg| format!("--config={cfg}")));
+    cmd
 }
 
 fn print_command(command: &Command) {
@@ -181,7 +178,8 @@ pub fn check_rust_version() {
         eprintln!("cargo-3ds requires a nightly rustc version.");
         eprintln!(
             "Please run `rustup override set nightly` to use nightly in the \
-            current directory."
+            current directory, or use `cargo +nightly 3ds` to use it for a \
+            single invocation."
         );
         process::exit(1);
     }

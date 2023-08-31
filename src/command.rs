@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, build_smdh, find_cargo, get_metadata, link, print_command, CTRConfig};
+use crate::{build_3dsx, build_smdh, cargo, get_metadata, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -22,7 +22,7 @@ pub struct Input {
     pub cmd: CargoCmd,
 
     /// Print the exact commands `cargo-3ds` is running. Note that this does not
-    /// set the verbose flag for cargo itself. To set cargo's verbose flag, add
+    /// set the verbose flag for cargo itself. To set cargo's verbosity flag, add
     /// `-- -v` to the end of the command line.
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
@@ -165,21 +165,21 @@ impl CargoCmd {
 
                 // We can't run 3DS executables on the host, but we want to respect
                 // the user's "runner" configuration if set.
-                if test.doc {
-                    eprintln!("Documentation tests requested, no 3dsx will be built");
-
-                    // https://github.com/rust-lang/cargo/issues/7040
-                    cargo_args.append(&mut vec![
-                        "--doc".to_string(),
-                        "-Z".to_string(),
-                        "doctest-xcompile".to_string(),
-                        // doctests don't automatically build the `test` crate,
-                        // so we manually specify it on the command line
-                        "-Z".to_string(),
-                        "build-std=std,test".to_string(),
-                    ]);
-                } else if !test.run_args.is_runner_configured() {
+                //
+                // If doctests were requested, `--no-run` will be rejected on the
+                // command line and must be set with RUSTDOCFLAGS instead:
+                // https://github.com/rust-lang/rust/issues/87022
+                if !test.run_args.use_custom_runner() && !test.doc {
                     cargo_args.push("--no-run".to_string());
+                }
+
+                if test.doc {
+                    cargo_args.extend([
+                        "--doc".into(),
+                        // https://github.com/rust-lang/cargo/issues/7040
+                        "-Z".into(),
+                        "doctest-xcompile".into(),
+                    ]);
                 }
 
                 cargo_args
@@ -206,7 +206,7 @@ impl CargoCmd {
         match self {
             CargoCmd::Build(_) => "build",
             CargoCmd::Run(run) => {
-                if run.is_runner_configured() {
+                if run.use_custom_runner() {
                     "run"
                 } else {
                     "build"
@@ -228,23 +228,31 @@ impl CargoCmd {
 
     /// Whether or not this command should build a 3DSX executable file.
     pub fn should_build_3dsx(&self) -> bool {
-        matches!(
-            self,
-            Self::Build(_) | Self::Run(_) | Self::Test(Test { doc: false, .. })
-        )
+        match self {
+            Self::Build(_) | CargoCmd::Run(_) => true,
+            &Self::Test(Test { doc, .. }) => {
+                if doc {
+                    eprintln!("Documentation tests requested, no 3dsx will be built");
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Whether or not the resulting executable should be sent to the 3DS with
     /// `3dslink`.
     pub fn should_link_to_device(&self) -> bool {
         match self {
-            Self::Test(test) => !(test.no_run || test.run_args.is_runner_configured()),
-            Self::Run(run) => !run.is_runner_configured(),
+            Self::Test(Test { no_run: true, .. }) => false,
+            Self::Run(run) | Self::Test(Test { run_args: run, .. }) => !run.use_custom_runner(),
             _ => false,
         }
     }
 
-    pub const DEFAULT_MESSAGE_FORMAT: &str = "json-render-diagnostics";
+    pub const DEFAULT_MESSAGE_FORMAT: &'static str = "json-render-diagnostics";
 
     pub fn extract_message_format(&mut self) -> Result<Option<String>, String> {
         let cargo_args = match self {
@@ -347,7 +355,7 @@ impl RemainingArgs {
 
         if let Some(split) = args.iter().position(|s| s == "--") {
             let second_half = args.split_off(split + 1);
-            // take off the "--" arg we found
+            // take off the "--" arg we found, we'll add one later if needed
             args.pop();
 
             (args, second_half)
@@ -421,7 +429,7 @@ impl Run {
         // Run the normal "build" callback
         self.build_args.callback(config);
 
-        if !self.is_runner_configured() {
+        if !self.use_custom_runner() {
             if let Some(cfg) = config {
                 eprintln!("Running 3dslink");
                 link(cfg, self, self.build_args.verbose);
@@ -431,45 +439,44 @@ impl Run {
 
     /// Returns whether the cargo environment has `target.armv6k-nintendo-3ds.runner`
     /// configured. This will only be checked once during the lifetime of the program,
-    /// and takes into account the usual ways Cargo looks for
+    /// and takes into account the usual ways Cargo looks for its
     /// [configuration](https://doc.rust-lang.org/cargo/reference/config.html):
     ///
     /// - `.cargo/config.toml`
     /// - Environment variables
     /// - Command-line `--config` overrides
-    pub fn is_runner_configured(&self) -> bool {
+    pub fn use_custom_runner(&self) -> bool {
         static HAS_RUNNER: OnceLock<bool> = OnceLock::new();
 
-        let has_runner = HAS_RUNNER.get_or_init(|| {
-            let mut cmd = find_cargo();
-
-            let config_args = self.config.iter().map(|cfg| format!("--config={cfg}"));
-
-            cmd.args(config_args)
-                .args([
-                    "config",
-                    "-Zunstable-options",
-                    "get",
-                    "target.armv6k-nintendo-3ds.runner",
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
+        let &custom_runner_configured = HAS_RUNNER.get_or_init(|| {
+            let mut cmd = cargo(&self.config);
+            cmd.args([
+                // https://github.com/rust-lang/cargo/issues/9301
+                "-Z",
+                "unstable-options",
+                "config",
+                "get",
+                "target.armv6k-nintendo-3ds.runner",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
 
             if self.build_args.verbose {
                 print_command(&cmd);
             }
 
+            // `cargo config get` exits zero if the config exists, or nonzero otherwise
             cmd.status().map_or(false, |status| status.success())
         });
 
         if self.build_args.verbose {
             eprintln!(
                 "Custom runner is {}configured",
-                if *has_runner { "" } else { "not " }
+                if custom_runner_configured { "" } else { "not " }
             );
         }
 
-        *has_runner
+        custom_runner_configured
     }
 }
 
@@ -488,13 +495,13 @@ impl Test {
     }
 }
 
-const TOML_CHANGES: &str = "ctru-rs = { git = \"https://github.com/rust3ds/ctru-rs\" }
+const TOML_CHANGES: &str = r#"ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }
 
 [package.metadata.cargo-3ds]
-romfs_dir = \"romfs\"
-";
+romfs_dir = "romfs"
+"#;
 
-const CUSTOM_MAIN_RS: &str = "use ctru::prelude::*;
+const CUSTOM_MAIN_RS: &str = r#"use ctru::prelude::*;
 
 fn main() {
     ctru::use_panic_handler();
@@ -504,8 +511,8 @@ fn main() {
     let gfx = Gfx::new().unwrap();
     let _console = Console::new(gfx.top_screen.borrow_mut());
 
-    println!(\"Hello, World!\");
-    println!(\"\\x1b[29;16HPress Start to exit\");
+    println!("Hello, World!");
+    println!("\x1b[29;16HPress Start to exit");
 
     while apt.main_loop() {
         gfx.wait_for_vblank();
@@ -516,7 +523,7 @@ fn main() {
         }
     }
 }
-";
+"#;
 
 impl New {
     /// Callback for `cargo 3ds new`.
