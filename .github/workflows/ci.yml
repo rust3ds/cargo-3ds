@@ -56,16 +56,16 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           toolchain: ${{ matrix.toolchain }}
-      
+
       - name: Install cargo-3ds
         uses: actions-rs/cargo@v1
         with:
           command: install
-          args: --path .
+          args: --locked --path .
 
       - name: Create new project
         run: cargo 3ds new app --bin
-      
+
       - name: Build project
         working-directory: ./app
         run: cargo 3ds build --release

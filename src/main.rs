@@ -1,9 +1,8 @@
+use std::process;
+
 use cargo_3ds::command::Cargo;
 use cargo_3ds::{check_rust_version, run_cargo};
-
 use clap::Parser;
-
-use std::process;
 
 fn main() {
     check_rust_version();
@@ -24,5 +23,5 @@ fn main() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    input.cmd.run_callback(&messages, input.verbose);
+    input.cmd.run_callback(&messages);
 }
