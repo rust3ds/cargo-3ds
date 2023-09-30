@@ -10,7 +10,6 @@ use cargo_metadata::{Message, MetadataCommand};
 use command::{Input, Test};
 use rustc_version::Channel;
 use semver::Version;
-use serde::Deserialize;
 use tee::TeeReader;
 
 use crate::command::{CargoCmd, Run};
@@ -98,16 +97,8 @@ pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Com
     }
 
     if let CargoCmd::Test(test) = cargo_cmd {
-        let no_run_flag = if test.run_args.use_custom_runner() {
-            ""
-        } else {
-            // We don't support running doctests by default, but cargo doesn't like
-            // --no-run for doctests, so we have to plumb it in via RUSTDOCFLAGS
-            " --no-run"
-        };
-
         // RUSTDOCFLAGS is simply ignored if --doc wasn't passed, so we always set it.
-        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default() + no_run_flag;
+        let rustdoc_flags = std::env::var("RUSTDOCFLAGS").unwrap_or_default() + test.rustdocflags();
         command.env("RUSTDOCFLAGS", rustdoc_flags);
     }
 
@@ -212,6 +203,7 @@ pub fn check_rust_version() {
 /// in [`build_smdh`], [`build_3dsx`], and [`link`].
 pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     let metadata = MetadataCommand::new()
+        .no_deps()
         .exec()
         .expect("Failed to get cargo metadata");
 
@@ -399,7 +391,7 @@ pub fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
     (romfs_path, is_default)
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Default)]
 pub struct CTRConfig {
     name: String,
     author: String,

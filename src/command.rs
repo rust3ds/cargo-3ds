@@ -160,30 +160,7 @@ impl CargoCmd {
         match self {
             CargoCmd::Build(build) => build.passthrough.cargo_args(),
             CargoCmd::Run(run) => run.build_args.passthrough.cargo_args(),
-            CargoCmd::Test(test) => {
-                let mut cargo_args = test.run_args.build_args.passthrough.cargo_args();
-
-                // We can't run 3DS executables on the host, but we want to respect
-                // the user's "runner" configuration if set.
-                //
-                // If doctests were requested, `--no-run` will be rejected on the
-                // command line and must be set with RUSTDOCFLAGS instead:
-                // https://github.com/rust-lang/rust/issues/87022
-                if !test.run_args.use_custom_runner() && !test.doc {
-                    cargo_args.push("--no-run".to_string());
-                }
-
-                if test.doc {
-                    cargo_args.extend([
-                        "--doc".into(),
-                        // https://github.com/rust-lang/cargo/issues/7040
-                        "-Z".into(),
-                        "doctest-xcompile".into(),
-                    ]);
-                }
-
-                cargo_args
-            }
+            CargoCmd::Test(test) => test.cargo_args(),
             CargoCmd::New(new) => {
                 // We push the original path in the new command (we captured it in [`New`] to learn about the context)
                 let mut cargo_args = new.cargo_args.cargo_args();
@@ -491,6 +468,46 @@ impl Test {
         } else {
             // If the tests have to run, use the "run" callback
             self.run_args.callback(config);
+        }
+    }
+
+    fn should_run(&self) -> bool {
+        self.run_args.use_custom_runner() && !self.no_run
+    }
+
+    /// The args to pass to the underlying `cargo test` command.
+    fn cargo_args(&self) -> Vec<String> {
+        let mut cargo_args = self.run_args.build_args.passthrough.cargo_args();
+
+        // We can't run 3DS executables on the host, but we want to respect
+        // the user's "runner" configuration if set.
+        //
+        // If doctests were requested, `--no-run` will be rejected on the
+        // command line and must be set with RUSTDOCFLAGS instead:
+        // https://github.com/rust-lang/rust/issues/87022
+
+        if self.doc {
+            cargo_args.extend([
+                "--doc".into(),
+                // https://github.com/rust-lang/cargo/issues/7040
+                "-Z".into(),
+                "doctest-xcompile".into(),
+            ]);
+        } else if !self.should_run() {
+            cargo_args.push("--no-run".into());
+        }
+
+        cargo_args
+    }
+
+    /// Flags to pass to rustdoc via RUSTDOCFLAGS
+    pub(crate) fn rustdocflags(&self) -> &'static str {
+        if self.should_run() {
+            ""
+        } else {
+            // We don't support running doctests by default, but cargo doesn't like
+            // --no-run for doctests, so we have to plumb it in via RUSTDOCFLAGS
+            " --no-run"
         }
     }
 }
