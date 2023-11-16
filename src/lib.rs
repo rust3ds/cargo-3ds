@@ -1,4 +1,5 @@
 pub mod command;
+mod graph;
 
 use core::fmt;
 use std::io::{BufRead, BufReader};
@@ -13,6 +14,7 @@ use semver::Version;
 use tee::TeeReader;
 
 use crate::command::{CargoCmd, Run};
+use crate::graph::UnitGraph;
 
 /// Build a command using [`make_cargo_build_command`] and execute it,
 /// parsing and returning the messages from the spawned process.
@@ -21,6 +23,20 @@ use crate::command::{CargoCmd, Run};
 /// `.elf` binary that can be used to create other 3ds files.
 pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
     let mut command = make_cargo_command(input, &message_format);
+
+    let libctru = if should_use_ctru_debuginfo(&command, input.verbose) {
+        "ctrud"
+    } else {
+        "ctru"
+    };
+
+    let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
+        + &format!(
+            " -L{}/libctru/lib -l{libctru}",
+            env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
+        );
+
+    command.env("RUSTFLAGS", rust_flags);
 
     if input.verbose {
         print_command(&command);
@@ -57,6 +73,29 @@ pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, 
     (process.wait().unwrap(), messages)
 }
 
+/// Ensure that we use the same `-lctru[d]` flag that `ctru-sys` is using in its build.
+fn should_use_ctru_debuginfo(cargo_cmd: &Command, verbose: bool) -> bool {
+    match UnitGraph::from_cargo(cargo_cmd, verbose) {
+        Ok(unit_graph) => {
+            let Some(unit) = unit_graph
+                .units
+                .iter()
+                .find(|unit| unit.target.name == "ctru-sys")
+            else {
+                eprintln!("Warning: unable to check if `ctru` debuginfo should be linked: `ctru-sys` not found");
+                return false;
+            };
+
+            let debuginfo = unit.profile.debuginfo.unwrap_or(0);
+            debuginfo > 0
+        }
+        Err(err) => {
+            eprintln!("Warning: unable to check if `ctru` debuginfo should be linked: {err}");
+            false
+        }
+    }
+}
+
 /// Create a cargo command based on the context.
 ///
 /// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
@@ -70,14 +109,7 @@ pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Com
     // Any command that needs to compile code will run under this environment.
     // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
     if cargo_cmd.should_compile() {
-        let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
-            + &format!(
-                " -L{}/libctru/lib -lctru",
-                env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
-            );
-
         command
-            .env("RUSTFLAGS", rust_flags)
             .arg("--target")
             .arg("armv6k-nintendo-3ds")
             .arg("--message-format")
