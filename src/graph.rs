@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io::Read;
 use std::process::{Command, Stdio};
 
 use cargo_metadata::Target;
@@ -23,24 +24,18 @@ impl UnitGraph {
     ///
     /// See <https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#unit-graph>.
     pub fn from_cargo(cargo_cmd: &Command, verbose: bool) -> Result<Self, Box<dyn Error>> {
-        // Since Command isn't Clone, copy it "by hand":
+        // Since Command isn't Clone, copy it "by hand", by copying its args and envs
         let mut cmd = Command::new(cargo_cmd.get_program());
 
-        // TODO: this should probably use "build" subcommand for "run", since right
-        // now there appears to be a crash in cargo when using `run`:
-        //
-        // thread 'main' panicked at src/cargo/ops/cargo_run.rs:83:5:
-        // assertion `left == right` failed
-        //   left: 0
-        //  right: 1
-
         let mut args = cargo_cmd.get_args();
-        cmd.arg(args.next().unwrap())
+        cmd.args(args.next())
             // These options must be added before any possible `--`, so the best
             // place is to just stick them immediately after the first arg (subcommand)
             .args(["-Z", "unstable-options", "--unit-graph"])
             .args(args)
-            .stdout(Stdio::piped());
+            .envs(cargo_cmd.get_envs().filter_map(|(k, v)| Some((k, v?))))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         if verbose {
             print_command(&cmd);
@@ -48,16 +43,25 @@ impl UnitGraph {
 
         let mut proc = cmd.spawn()?;
         let stdout = proc.stdout.take().unwrap();
+        let mut stderr = proc.stderr.take().unwrap();
 
         let result: Self = serde_json::from_reader(stdout).map_err(|err| {
+            let mut stderr_str = String::new();
+            let _ = stderr.read_to_string(&mut stderr_str);
+
             let _ = proc.wait();
-            err
+            format!("unable to parse `--unit-graph` json: {err}\nstderr: `{stderr_str}`")
         })?;
 
-        let status = proc.wait()?;
-        if !status.success() {
-            return Err(format!("`cargo --unit-graph` exited with status {status:?}").into());
-        }
+        let _status = proc.wait()?;
+        // TODO:
+        // `cargo run --unit-graph` panics at src/cargo/ops/cargo_run.rs:83:5
+        // I should probably file a bug for that, then return the error here when it's fixed,
+        // but for now just ignore it since we still get valid JSON from the command.
+        //
+        // if !status.success() {
+        //     return Err(format!("`cargo --unit-graph` exited with status {status:?}").into());
+        // }
 
         if result.version == 1 {
             Ok(result)

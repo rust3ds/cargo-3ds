@@ -2,6 +2,7 @@ pub mod command;
 mod graph;
 
 use core::fmt;
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -30,13 +31,16 @@ pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, 
         "ctru"
     };
 
-    let rust_flags = env::var("RUSTFLAGS").unwrap_or_default()
-        + &format!(
-            " -L{}/libctru/lib -l{libctru}",
-            env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable")
-        );
+    let rustflags = command
+        .get_envs()
+        .find(|(var, _)| var == &OsStr::new("RUSTFLAGS"))
+        .and_then(|(_, flags)| flags)
+        .unwrap_or_default()
+        .to_string_lossy();
 
-    command.env("RUSTFLAGS", rust_flags);
+    let rustflags = format!("{rustflags} -l{libctru}");
+
+    command.env("RUSTFLAGS", rustflags);
 
     if input.verbose {
         print_command(&command);
@@ -101,10 +105,18 @@ fn should_use_ctru_debuginfo(cargo_cmd: &Command, verbose: bool) -> bool {
 /// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
 /// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
 pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Command {
+    let devkitpro =
+        env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable");
+    // TODO: should we actually prepend the user's RUSTFLAGS for linking order? not sure
+    let rustflags =
+        env::var("RUSTFLAGS").unwrap_or_default() + &format!(" -L{devkitpro}/libctru/lib");
+
     let cargo_cmd = &input.cmd;
 
     let mut command = cargo(&input.config);
-    command.arg(cargo_cmd.subcommand_name());
+    command
+        .arg(cargo_cmd.subcommand_name())
+        .env("RUSTFLAGS", rustflags);
 
     // Any command that needs to compile code will run under this environment.
     // Even `clippy` and `check` need this kind of context, so we'll just assume any other `Passthrough` command uses it too.
