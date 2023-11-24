@@ -54,10 +54,11 @@ impl UnitGraph {
         })?;
 
         let _status = proc.wait()?;
-        // TODO:
+        // TODO: with cargo 1.74.0-nightly (b4ddf95ad 2023-09-18),
         // `cargo run --unit-graph` panics at src/cargo/ops/cargo_run.rs:83:5
-        // I should probably file a bug for that, then return the error here when it's fixed,
-        // but for now just ignore it since we still get valid JSON from the command.
+        // It seems to have been fixed as of cargo 1.76.0-nightly (71cd3a926 2023-11-20)
+        // so maybe we can stop ignoring it once we bump the minimum toolchain version,
+        // and certainly we should once `--unit-graph` is ever stabilized.
         //
         // if !status.success() {
         //     return Err(format!("`cargo --unit-graph` exited with status {status:?}").into());
