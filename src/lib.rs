@@ -8,6 +8,7 @@ use std::{env, io, process};
 
 use cargo_metadata::{Message, MetadataCommand};
 use command::{Input, Test};
+use cytryna::smdh::Smdh;
 use rustc_version::Channel;
 use semver::Version;
 use tee::TeeReader;
@@ -229,14 +230,16 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
 
     let (package, artifact) = (package.unwrap(), artifact.unwrap());
 
-    let mut icon = String::from("./icon.png");
+    let mut icon_path = String::from("./icon.png");
 
-    if !Path::new(&icon).exists() {
-        icon = format!(
+    if !Path::new(&icon_path).exists() {
+        icon_path = format!(
             "{}/libctru/default_icon.png",
             env::var("DEVKITPRO").unwrap()
         );
     }
+
+    let icon = image::open(Path::new(&icon_path)).expect("Invalid PNG image");
 
     // for now assume a single "kind" since we only support one output artifact
     let name = match artifact.target.kind[0].as_ref() {
@@ -267,34 +270,16 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
     }
 }
 
-/// Builds the smdh using `smdhtool`.
-/// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
-pub fn build_smdh(config: &CTRConfig, verbose: bool) {
-    let mut command = Command::new("smdhtool");
-    command
-        .arg("--create")
-        .arg(&config.name)
-        .arg(&config.description)
-        .arg(&config.author)
-        .arg(&config.icon)
-        .arg(config.path_smdh())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+/// Builds the smdh using `cytryna` library.
+pub fn build_smdh(config: &CTRConfig) {
+    let smdh = Smdh::builder()
+        .with_short_desc(&config.name).unwrap()
+        .with_long_desc(&config.description).unwrap()
+        .with_publisher(&config.author).unwrap()
+        .with_icon((&config.icon).try_into().unwrap())
+        .build().expect("SMDH building failed");
 
-    if verbose {
-        print_command(&command);
-    }
-
-    let mut process = command
-        .spawn()
-        .expect("smdhtool command failed, most likely due to 'smdhtool' not being in $PATH");
-
-    let status = process.wait().unwrap();
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
+    std::fs::write(config.path_smdh(), smdh.as_bytes()).expect("Failed to write SMDH data");
 }
 
 /// Builds the 3dsx using `3dsxtool`.
@@ -396,7 +381,7 @@ pub struct CTRConfig {
     name: String,
     author: String,
     description: String,
-    icon: String,
+    icon: image::DynamicImage,
     target_path: PathBuf,
     cargo_manifest_path: PathBuf,
 }
