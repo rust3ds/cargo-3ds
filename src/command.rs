@@ -349,7 +349,7 @@ impl Build {
     fn callback(&self, config: &Option<CTRConfig>) {
         if let Some(config) = config {
             eprintln!("Building smdh: {}", config.path_smdh().display());
-            build_smdh(config, self.verbose);
+            build_smdh(config);
 
             eprintln!("Building 3dsx: {}", config.path_3dsx().display());
             build_3dsx(config, self.verbose);
