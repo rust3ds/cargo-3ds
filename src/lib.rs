@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::{env, io, process};
+use std::{env, fs, io, process};
 
 use cargo_metadata::{Message, MetadataCommand};
 use command::{Input, Test};
@@ -352,15 +352,23 @@ pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
 
     // If romfs directory exists, automatically include it
     let (romfs_path, is_default_romfs) = get_romfs_path(config);
+
     if romfs_path.is_dir() {
+        // If we can't find the RomFS dir, we should at least regenerate it
+        // as `cargo 3ds new` creates an empty directory, meaning that it does not
+        // save to git. This means that if the user clones a project built with cargo-3ds,
+        // they will not have a RomFS directory, and would not be able to build.
+        if !is_default_romfs {
+            eprintln!(
+                "Could not find configured RomFS dir: {}. Creating...",
+                &romfs_path.display()
+            );
+
+            fs::create_dir(&romfs_path).unwrap();
+        }
+
         eprintln!("Adding RomFS from {}", romfs_path.display());
         command.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
-    } else if !is_default_romfs {
-        eprintln!(
-            "Could not find configured RomFS dir: {}",
-            romfs_path.display()
-        );
-        process::exit(1);
     }
 
     if verbose {
