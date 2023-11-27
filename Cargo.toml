@@ -1,6 +1,6 @@
 [package]
 name = "cargo-3ds"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Rust3DS Org", "Andrea Ciliberti <meziu210@icloud.com>"]
 description = "Cargo wrapper for developing Nintendo 3DS homebrew apps"
 repository = "https://github.com/rust3ds/cargo-3ds"
@@ -19,3 +19,4 @@ tee = "0.1.0"
 toml = "0.5.6"
 clap = { version = "4.0.15", features = ["derive", "wrap_help"] }
 shlex = "1.1.0"
+serde_json = "1.0.108"
