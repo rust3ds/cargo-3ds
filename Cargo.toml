@@ -20,4 +20,4 @@ toml = "0.5.6"
 clap = { version = "4.0.15", features = ["derive", "wrap_help"] }
 shlex = "1.1.0"
 image = { version = "0.24.7", default-features = false, features = ["png"] }
-cytryna = { version = "0.1.0", git = "https://github.com/Maccraft123/cytryna.git", rev = "9dc50e499cd3fa9340d1ab182323dd82d3ea8b0a" }
+cytryna = { version = "0.1", default-features = false, features = ["smdh"], git = "https://github.com/Maccraft123/cytryna.git", rev = "ab2b9062d833911d87476f9e6cbb2cdb5517a579"}
