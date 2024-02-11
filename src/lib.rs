@@ -25,22 +25,24 @@ use crate::graph::UnitGraph;
 pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
     let mut command = make_cargo_command(input, &message_format);
 
-    let libctru = if should_use_ctru_debuginfo(&command, input.verbose) {
-        "ctrud"
-    } else {
-        "ctru"
-    };
+    if input.cmd.should_compile() {
+        let libctru = if should_use_ctru_debuginfo(&command, input.verbose) {
+            "ctrud"
+        } else {
+            "ctru"
+        };
 
-    let rustflags = command
-        .get_envs()
-        .find(|(var, _)| var == &OsStr::new("RUSTFLAGS"))
-        .and_then(|(_, flags)| flags)
-        .unwrap_or_default()
-        .to_string_lossy();
+        let rustflags = command
+            .get_envs()
+            .find(|(var, _)| var == &OsStr::new("RUSTFLAGS"))
+            .and_then(|(_, flags)| flags)
+            .unwrap_or_default()
+            .to_string_lossy();
 
-    let rustflags = format!("{rustflags} -l{libctru}");
+        let rustflags = format!("{rustflags} -l{libctru}");
 
-    command.env("RUSTFLAGS", rustflags);
+        command.env("RUSTFLAGS", rustflags);
+    }
 
     if input.verbose {
         print_command(&command);
