@@ -215,8 +215,8 @@ pub fn find_sysroot() -> PathBuf {
 pub fn check_rust_version(input: &Input) {
     let rustc_version = rustc_version::version_meta().unwrap();
 
-    // If the channel isn't nightly, we can't make use the required unstable tools.
-    // However, `cargo new` doesn't have these requirements.
+    // If the channel isn't nightly, we can't make use of the required unstable tools.
+    // However, `cargo 3ds new` doesn't have these requirements.
     if rustc_version.channel > Channel::Nightly && input.cmd.should_compile() {
         eprintln!("building with cargo-3ds requires a nightly rustc version.");
         eprintln!(
