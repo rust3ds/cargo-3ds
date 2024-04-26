@@ -25,22 +25,25 @@ use crate::graph::UnitGraph;
 pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, Vec<Message>) {
     let mut command = make_cargo_command(input, &message_format);
 
-    let libctru = if should_use_ctru_debuginfo(&command, input.verbose) {
-        "ctrud"
-    } else {
-        "ctru"
-    };
+    // The unit graph is needed only when compiling a program.
+    if input.cmd.should_compile() {
+        let libctru = if should_use_ctru_debuginfo(&command, input.verbose) {
+            "ctrud"
+        } else {
+            "ctru"
+        };
 
-    let rustflags = command
-        .get_envs()
-        .find(|(var, _)| var == &OsStr::new("RUSTFLAGS"))
-        .and_then(|(_, flags)| flags)
-        .unwrap_or_default()
-        .to_string_lossy();
+        let rustflags = command
+            .get_envs()
+            .find(|(var, _)| var == &OsStr::new("RUSTFLAGS"))
+            .and_then(|(_, flags)| flags)
+            .unwrap_or_default()
+            .to_string_lossy();
 
-    let rustflags = format!("{rustflags} -l{libctru}");
+        let rustflags = format!("{rustflags} -l{libctru}");
 
-    command.env("RUSTFLAGS", rustflags);
+        command.env("RUSTFLAGS", rustflags);
+    }
 
     if input.verbose {
         print_command(&command);
@@ -182,10 +185,13 @@ fn print_command(command: &Command) {
         eprintln!(
             "   {}={} \\",
             k.to_string_lossy(),
-            v.map_or_else(String::new, |s| shlex::quote(&s).to_string())
+            v.map_or_else(String::new, |s| shlex::try_quote(&s).unwrap().to_string())
         );
     }
-    eprintln!("   {}\n", shlex::join(cmd_str.iter().map(String::as_str)));
+    eprintln!(
+        "   {}\n",
+        shlex::try_join(cmd_str.iter().map(String::as_str)).unwrap()
+    );
 }
 
 /// Finds the sysroot path of the current toolchain
@@ -206,11 +212,13 @@ pub fn find_sysroot() -> PathBuf {
 
 /// Checks the current rust version and channel.
 /// Exits if the minimum requirement is not met.
-pub fn check_rust_version() {
+pub fn check_rust_version(input: &Input) {
     let rustc_version = rustc_version::version_meta().unwrap();
 
-    if rustc_version.channel > Channel::Nightly {
-        eprintln!("cargo-3ds requires a nightly rustc version.");
+    // If the channel isn't nightly, we can't make use the required unstable tools.
+    // However, `cargo new` doesn't have these requirements.
+    if rustc_version.channel > Channel::Nightly && input.cmd.should_compile() {
+        eprintln!("building with cargo-3ds requires a nightly rustc version.");
         eprintln!(
             "Please run `rustup override set nightly` to use nightly in the \
             current directory, or use `cargo +nightly 3ds` to use it for a \

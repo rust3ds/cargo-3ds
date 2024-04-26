@@ -555,9 +555,11 @@ impl New {
         let toml_path = project_path.join("Cargo.toml");
         let romfs_path = project_path.join("romfs");
         let main_rs_path = project_path.join("src/main.rs");
+        let dummy_romfs_path = romfs_path.join("PUT_YOUR_ROMFS_FILES_HERE.txt");
 
-        // Create the "romfs" directory
+        // Create the "romfs" directory, and place a dummy file within it.
         fs::create_dir(romfs_path).unwrap();
+        fs::File::create(dummy_romfs_path).unwrap();
 
         // Read the contents of `Cargo.toml` to a string
         let mut buf = String::new();
