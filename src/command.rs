@@ -3,10 +3,11 @@ use std::io::Read;
 use std::process::Stdio;
 use std::sync::OnceLock;
 
-use cargo_metadata::Message;
+use cargo_metadata::{Message, Metadata};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, build_smdh, cargo, get_metadata, link, print_command, CTRConfig};
+use crate::config;
+use crate::{build_3dsx, build_smdh, cargo, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -295,23 +296,45 @@ impl CargoCmd {
     ///
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
-    pub fn run_callback(&self, messages: &[Message]) {
-        // Process the metadata only for commands that have it/use it
-        let config = if self.should_build_3dsx() {
-            eprintln!("Getting metadata");
+    pub fn run_callback(&self, messages: &[Message], metadata: &Metadata) {
+        // We perform a lookup by package so that we only build the 3dsx when the
+        // artifact was actually produced *by* that package. Otherwise, we'd end
+        // up building each 3dsx once for every package in the workspace.
+        let cargo_3ds_by_package = config::Cargo3DS::from_metadata(metadata);
 
-            Some(get_metadata(messages))
-        } else {
-            None
-        };
+        let configs: Vec<_> = messages
+            .iter()
+            .filter_map(|m| match m {
+                Message::CompilerArtifact(artifact) => cargo_3ds_by_package
+                    .get(&artifact.package_id)?
+                    .artifact_config(metadata, artifact),
+                _ => None,
+            })
+            .collect();
 
-        // Run callback only for commands that use it
+        // First, run all the build callbacks for each target (i.e. build its .3dsx)
+        for config in &configs {
+            match self {
+                Self::Build(cmd) => cmd.callback(config),
+                Self::Run(cmd) => cmd.build_args.callback(config),
+                Self::Test(cmd) => cmd.run_args.build_args.callback(config),
+                _ => {}
+            }
+        }
+
+        // For run + test, we can only run one of the targets. Error if more or less
+        // than one executable was built, otherwise run the callback for the first target.
         match self {
-            Self::Build(cmd) => cmd.callback(&config),
-            Self::Run(cmd) => cmd.callback(&config),
-            Self::Test(cmd) => cmd.callback(&config),
+            Self::Run(_) | Self::Test(Test { no_run: false, .. }) if configs.len() != 1 => {
+                let names: Vec<_> = configs.iter().map(|c| c.name.clone()).collect();
+                eprintln!("Error: expected exactly one executable to run, got {names:?}");
+                // TODO: should we exit nonzero here maybe?
+            }
+            Self::Run(cmd) => cmd.callback(&configs[0]),
+            Self::Test(cmd) => cmd.callback(&configs[0]),
+            // New is a special case where we always want to run its callback
             Self::New(cmd) => cmd.callback(),
-            _ => (),
+            _ => {}
         }
     }
 }
@@ -346,14 +369,12 @@ impl Build {
     /// Callback for `cargo 3ds build`.
     ///
     /// This callback handles building the application as a `.3dsx` file.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        if let Some(config) = config {
-            eprintln!("Building smdh: {}", config.path_smdh().display());
-            build_smdh(config, self.verbose);
+    fn callback(&self, config: &CTRConfig) {
+        eprintln!("Building smdh: {}", config.path_smdh().display());
+        build_smdh(config, self.verbose);
 
-            eprintln!("Building 3dsx: {}", config.path_3dsx().display());
-            build_3dsx(config, self.verbose);
-        }
+        eprintln!("Building 3dsx: {}", config.path_3dsx().display());
+        build_3dsx(config, self.verbose);
     }
 }
 
@@ -402,15 +423,10 @@ impl Run {
     /// Callback for `cargo 3ds run`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        // Run the normal "build" callback
-        self.build_args.callback(config);
-
+    fn callback(&self, config: &CTRConfig) {
         if !self.use_custom_runner() {
-            if let Some(cfg) = config {
-                eprintln!("Running 3dslink");
-                link(cfg, self, self.build_args.verbose);
-            }
+            eprintln!("Running 3dslink");
+            link(config, self, self.build_args.verbose);
         }
     }
 
@@ -461,11 +477,8 @@ impl Test {
     /// Callback for `cargo 3ds test`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        if self.no_run {
-            // If the tests don't have to run, use the "build" callback
-            self.run_args.build_args.callback(config);
-        } else {
+    fn callback(&self, config: &CTRConfig) {
+        if !self.no_run {
             // If the tests have to run, use the "run" callback
             self.run_args.callback(config);
         }

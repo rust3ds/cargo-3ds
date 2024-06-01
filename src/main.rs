@@ -17,11 +17,16 @@ fn main() {
         }
     };
 
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .unwrap();
+
     let (status, messages) = run_cargo(&input, message_format);
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    input.cmd.run_callback(&messages);
+    input.cmd.run_callback(&messages, &metadata);
 }

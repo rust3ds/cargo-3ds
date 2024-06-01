@@ -1,14 +1,16 @@
 pub mod command;
+
+mod config;
 mod graph;
 
 use core::fmt;
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, io, process};
 
-use cargo_metadata::{Message, MetadataCommand};
+use cargo_metadata::Message;
 use command::{Input, Test};
 use rustc_version::Channel;
 use semver::Version;
@@ -244,75 +246,6 @@ pub fn check_rust_version() {
     }
 }
 
-/// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
-/// The returned [`CTRConfig`] is then used for further building in and execution
-/// in [`build_smdh`], [`build_3dsx`], and [`link`].
-pub fn get_metadata(messages: &[Message]) -> CTRConfig {
-    let metadata = MetadataCommand::new()
-        .no_deps()
-        .exec()
-        .expect("Failed to get cargo metadata");
-
-    let mut package = None;
-    let mut artifact = None;
-
-    // Extract the final built executable. We may want to fail in cases where
-    // multiple executables, or none, were built?
-    for message in messages.iter().rev() {
-        if let Message::CompilerArtifact(art) = message {
-            if art.executable.is_some() {
-                package = Some(metadata[&art.package_id].clone());
-                artifact = Some(art.clone());
-
-                break;
-            }
-        }
-    }
-    if package.is_none() || artifact.is_none() {
-        eprintln!("No executable found from build command output!");
-        process::exit(1);
-    }
-
-    let (package, artifact) = (package.unwrap(), artifact.unwrap());
-
-    let mut icon = String::from("./icon.png");
-
-    if !Path::new(&icon).exists() {
-        icon = format!(
-            "{}/libctru/default_icon.png",
-            env::var("DEVKITPRO").unwrap()
-        );
-    }
-
-    // for now assume a single "kind" since we only support one output artifact
-    let name = match artifact.target.kind[0].as_ref() {
-        "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
-            format!("{} tests", artifact.target.name)
-        }
-        "example" => {
-            format!("{} - {} example", artifact.target.name, package.name)
-        }
-        _ => artifact.target.name,
-    };
-
-    let author = match package.authors.as_slice() {
-        [name, ..] => name.clone(),
-        [] => String::from("Unspecified Author"), // as standard with the devkitPRO toolchain
-    };
-
-    CTRConfig {
-        name,
-        author,
-        description: package
-            .description
-            .clone()
-            .unwrap_or_else(|| String::from("Homebrew Application")),
-        icon,
-        target_path: artifact.executable.unwrap().into(),
-        cargo_manifest_path: package.manifest_path.into(),
-    }
-}
-
 /// Builds the smdh using `smdhtool`.
 /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
 pub fn build_smdh(config: &CTRConfig, verbose: bool) {
@@ -437,7 +370,7 @@ pub fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
     (romfs_path, is_default)
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CTRConfig {
     name: String,
     author: String,
