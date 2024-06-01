@@ -275,7 +275,7 @@ mod tests {
         // have a bunch more keys configured, but this at least tests the basic
         // collection / conversion process.
         let metadata: Metadata =
-            serde_json::from_str(include_str!("./test_metadata.json")).unwrap();
+            serde_json::from_str(include_str!("../testdata/cargo_metadata.json")).unwrap();
 
         let config = Cargo3DS::from_metadata(&metadata);
         assert_eq!(config.len(), 4);
