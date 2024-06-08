@@ -328,43 +328,6 @@ fn get_romfs_dir(package: &Package) -> Option<Utf8PathBuf> {
     }
 }
 
-/// Builds the smdh using `smdhtool`.
-/// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
-// TODO: maybe this should be a method of CTRConfig?
-pub fn build_smdh(config: &CTRConfig, verbose: bool) {
-    let author = if config.authors.is_empty() {
-        String::from("Unspecified Author") // as standard with the devkitPRO toolchain
-    } else {
-        config.authors.join(", ")
-    };
-
-    let mut command = Command::new("smdhtool");
-    command
-        .arg("--create")
-        .arg(&config.name)
-        .arg(&config.description)
-        .arg(author)
-        .arg(&config.icon_path)
-        .arg(config.path_smdh())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-
-    if verbose {
-        print_command(&command);
-    }
-
-    let mut process = command
-        .spawn()
-        .expect("smdhtool command failed, most likely due to 'smdhtool' not being in $PATH");
-
-    let status = process.wait().unwrap();
-
-    if !status.success() {
-        process::exit(status.code().unwrap_or(1));
-    }
-}
-
 /// Builds the 3dsx using `3dsxtool`.
 /// This will fail if `3dsxtool` is not within the running directory or in a directory found in $PATH
 pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
@@ -438,12 +401,50 @@ pub struct CTRConfig {
 }
 
 impl CTRConfig {
+    /// Get the path to the output `.3dsx` file.
     pub fn path_3dsx(&self) -> Utf8PathBuf {
         self.target_path.with_extension("3dsx")
     }
 
+    /// Get the path to the output `.smdh` file.
     pub fn path_smdh(&self) -> Utf8PathBuf {
         self.target_path.with_extension("smdh")
+    }
+
+    /// Builds the smdh using `smdhtool`.
+    /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
+    pub fn build_smdh(&self, verbose: bool) {
+        let author = if self.authors.is_empty() {
+            String::from("Unspecified Author") // as standard with the devkitPRO toolchain
+        } else {
+            self.authors.join(", ")
+        };
+
+        let mut command = Command::new("smdhtool");
+        command
+            .arg("--create")
+            .arg(&self.name)
+            .arg(&self.description)
+            .arg(author)
+            .arg(&self.icon_path)
+            .arg(self.path_smdh())
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        if verbose {
+            print_command(&command);
+        }
+
+        let mut process = command
+            .spawn()
+            .expect("smdhtool command failed, most likely due to 'smdhtool' not being in $PATH");
+
+        let status = process.wait().unwrap();
+
+        if !status.success() {
+            process::exit(status.code().unwrap_or(1));
+        }
     }
 }
 

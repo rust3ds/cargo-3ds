@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, build_smdh, cargo, get_metadata, link, print_command, CTRConfig};
+use crate::{build_3dsx, cargo, get_metadata, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -349,7 +349,7 @@ impl Build {
     fn callback(&self, config: &Option<CTRConfig>) {
         if let Some(config) = config {
             eprintln!("Building smdh: {}", config.path_smdh());
-            build_smdh(config, self.verbose);
+            config.build_smdh(self.verbose);
 
             eprintln!("Building 3dsx: {}", config.path_3dsx());
             build_3dsx(config, self.verbose);
