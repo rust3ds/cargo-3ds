@@ -4,11 +4,12 @@ mod graph;
 use core::fmt;
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
 use std::{env, io, process};
 
-use cargo_metadata::{Message, MetadataCommand};
+use camino::{Utf8Path, Utf8PathBuf};
+use cargo_metadata::{Message, MetadataCommand, Package};
 use command::{Input, Test};
 use rustc_version::Channel;
 use semver::Version;
@@ -281,13 +282,11 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
 
     let (package, artifact) = (package.unwrap(), artifact.unwrap());
 
-    let mut icon = String::from("./icon.png");
+    let mut icon_path = Utf8PathBuf::from("./icon.png");
 
-    if !Path::new(&icon).exists() {
-        icon = format!(
-            "{}/libctru/default_icon.png",
-            env::var("DEVKITPRO").unwrap()
-        );
+    if !icon_path.exists() {
+        icon_path = Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
+            .join(Utf8Path::new("libctru/default_icon.png"));
     }
 
     // for now assume a single "kind" since we only support one output artifact
@@ -301,34 +300,51 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
         _ => artifact.target.name,
     };
 
-    let author = match package.authors.as_slice() {
-        [name, ..] => name.clone(),
-        [] => String::from("Unspecified Author"), // as standard with the devkitPRO toolchain
-    };
+    let romfs_dir = get_romfs_dir(&package);
 
     CTRConfig {
         name,
-        author,
+        authors: package.authors,
         description: package
             .description
             .clone()
             .unwrap_or_else(|| String::from("Homebrew Application")),
-        icon,
-        target_path: artifact.executable.unwrap().into(),
-        cargo_manifest_path: package.manifest_path.into(),
+        icon_path,
+        romfs_dir,
+        target_path: artifact.executable.unwrap(),
+    }
+}
+
+fn get_romfs_dir(package: &Package) -> Option<Utf8PathBuf> {
+    if let Some(romfs_dir) = package
+        .metadata
+        .get("cargo-3ds")?
+        .get("romfs_dir")?
+        .as_str()
+    {
+        Some(package.manifest_path.parent()?.join(romfs_dir))
+    } else {
+        None
     }
 }
 
 /// Builds the smdh using `smdhtool`.
 /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
+// TODO: maybe this should be a method of CTRConfig?
 pub fn build_smdh(config: &CTRConfig, verbose: bool) {
+    let author = if config.authors.is_empty() {
+        String::from("Unspecified Author") // as standard with the devkitPRO toolchain
+    } else {
+        config.authors.join(", ")
+    };
+
     let mut command = Command::new("smdhtool");
     command
         .arg("--create")
         .arg(&config.name)
         .arg(&config.description)
-        .arg(&config.author)
-        .arg(&config.icon)
+        .arg(author)
+        .arg(&config.icon_path)
         .arg(config.path_smdh())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -356,18 +372,18 @@ pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
     command
         .arg(&config.target_path)
         .arg(config.path_3dsx())
-        .arg(format!("--smdh={}", config.path_smdh().to_string_lossy()));
+        .arg(format!("--smdh={}", config.path_smdh()));
 
-    // If romfs directory exists, automatically include it
-    let (romfs_path, is_default_romfs) = get_romfs_path(config);
-    if romfs_path.is_dir() {
-        eprintln!("Adding RomFS from {}", romfs_path.display());
-        command.arg(format!("--romfs={}", romfs_path.to_string_lossy()));
-    } else if !is_default_romfs {
-        eprintln!(
-            "Could not find configured RomFS dir: {}",
-            romfs_path.display()
-        );
+    let romfs = config
+        .romfs_dir
+        .as_deref()
+        .unwrap_or(Utf8Path::new("romfs"));
+
+    if romfs.is_dir() {
+        eprintln!("Adding RomFS from {romfs}");
+        command.arg(format!("--romfs={romfs}"));
+    } else if config.romfs_dir.is_some() {
+        eprintln!("Could not find configured RomFS dir: {romfs}");
         process::exit(1);
     }
 
@@ -411,54 +427,22 @@ pub fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
     }
 }
 
-/// Read the `RomFS` path from the Cargo manifest. If it's unset, use the default.
-/// The returned boolean is true when the default is used.
-pub fn get_romfs_path(config: &CTRConfig) -> (PathBuf, bool) {
-    let manifest_path = &config.cargo_manifest_path;
-    let manifest_str = std::fs::read_to_string(manifest_path)
-        .unwrap_or_else(|e| panic!("Could not open {}: {e}", manifest_path.display()));
-    let manifest_data: toml::Value =
-        toml::de::from_str(&manifest_str).expect("Could not parse Cargo manifest as TOML");
-
-    // Find the romfs setting and compute the path
-    let mut is_default = false;
-    let romfs_dir_setting = manifest_data
-        .as_table()
-        .and_then(|table| table.get("package"))
-        .and_then(toml::Value::as_table)
-        .and_then(|table| table.get("metadata"))
-        .and_then(toml::Value::as_table)
-        .and_then(|table| table.get("cargo-3ds"))
-        .and_then(toml::Value::as_table)
-        .and_then(|table| table.get("romfs_dir"))
-        .and_then(toml::Value::as_str)
-        .unwrap_or_else(|| {
-            is_default = true;
-            "romfs"
-        });
-    let mut romfs_path = manifest_path.clone();
-    romfs_path.pop(); // Pop Cargo.toml
-    romfs_path.push(romfs_dir_setting);
-
-    (romfs_path, is_default)
-}
-
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CTRConfig {
     name: String,
-    author: String,
+    authors: Vec<String>,
     description: String,
-    icon: String,
-    target_path: PathBuf,
-    cargo_manifest_path: PathBuf,
+    icon_path: Utf8PathBuf,
+    target_path: Utf8PathBuf,
+    romfs_dir: Option<Utf8PathBuf>,
 }
 
 impl CTRConfig {
-    pub fn path_3dsx(&self) -> PathBuf {
+    pub fn path_3dsx(&self) -> Utf8PathBuf {
         self.target_path.with_extension("3dsx")
     }
 
-    pub fn path_smdh(&self) -> PathBuf {
+    pub fn path_smdh(&self) -> Utf8PathBuf {
         self.target_path.with_extension("smdh")
     }
 }

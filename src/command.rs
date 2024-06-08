@@ -348,10 +348,10 @@ impl Build {
     /// This callback handles building the application as a `.3dsx` file.
     fn callback(&self, config: &Option<CTRConfig>) {
         if let Some(config) = config {
-            eprintln!("Building smdh: {}", config.path_smdh().display());
+            eprintln!("Building smdh: {}", config.path_smdh());
             build_smdh(config, self.verbose);
 
-            eprintln!("Building 3dsx: {}", config.path_3dsx().display());
+            eprintln!("Building 3dsx: {}", config.path_3dsx());
             build_3dsx(config, self.verbose);
         }
     }
