@@ -1,21 +1,19 @@
 pub mod command;
 mod graph;
 
-use core::fmt;
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus, Stdio};
-use std::{env, io, process};
+use std::{env, fmt, io, process};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::{Message, MetadataCommand, Package};
-use command::{Input, Test};
 use rustc_version::Channel;
 use semver::Version;
 use tee::TeeReader;
 
-use crate::command::{CargoCmd, Run};
+use crate::command::{CargoCmd, Input, Run, Test};
 use crate::graph::UnitGraph;
 
 /// Build a command using [`make_cargo_build_command`] and execute it,
@@ -286,7 +284,8 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
 
     if !icon_path.exists() {
         icon_path = Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
-            .join(Utf8Path::new("libctru/default_icon.png"));
+            .join("libctru")
+            .join("default_icon.png");
     }
 
     // for now assume a single "kind" since we only support one output artifact
@@ -307,25 +306,21 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
         authors: package.authors,
         description: package
             .description
-            .clone()
             .unwrap_or_else(|| String::from("Homebrew Application")),
         icon_path,
         romfs_dir,
+        manifest_dir: package.manifest_path.parent().unwrap().into(),
         target_path: artifact.executable.unwrap(),
     }
 }
 
 fn get_romfs_dir(package: &Package) -> Option<Utf8PathBuf> {
-    if let Some(romfs_dir) = package
+    package
         .metadata
         .get("cargo-3ds")?
         .get("romfs_dir")?
         .as_str()
-    {
-        Some(package.manifest_path.parent()?.join(romfs_dir))
-    } else {
-        None
-    }
+        .map(Utf8PathBuf::from)
 }
 
 /// Builds the 3dsx using `3dsxtool`.
@@ -337,11 +332,7 @@ pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
         .arg(config.path_3dsx())
         .arg(format!("--smdh={}", config.path_smdh()));
 
-    let romfs = config
-        .romfs_dir
-        .as_deref()
-        .unwrap_or(Utf8Path::new("romfs"));
-
+    let romfs = config.romfs_dir();
     if romfs.is_dir() {
         eprintln!("Adding RomFS from {romfs}");
         command.arg(format!("--romfs={romfs}"));
@@ -397,6 +388,7 @@ pub struct CTRConfig {
     description: String,
     icon_path: Utf8PathBuf,
     target_path: Utf8PathBuf,
+    manifest_dir: Utf8PathBuf,
     romfs_dir: Option<Utf8PathBuf>,
 }
 
@@ -409,6 +401,12 @@ impl CTRConfig {
     /// Get the path to the output `.smdh` file.
     pub fn path_smdh(&self) -> Utf8PathBuf {
         self.target_path.with_extension("smdh")
+    }
+
+    /// Get the absolute path to the romfs directory, defaulting to `romfs` if not specified.
+    pub fn romfs_dir(&self) -> Utf8PathBuf {
+        self.manifest_dir
+            .join(self.romfs_dir.as_deref().unwrap_or(Utf8Path::new("romfs")))
     }
 
     /// Builds the smdh using `smdhtool`.
