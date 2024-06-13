@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use cargo_metadata::Message;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, build_smdh, cargo, get_metadata, link, print_command, CTRConfig};
+use crate::{build_3dsx, cargo, get_metadata, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -348,10 +348,10 @@ impl Build {
     /// This callback handles building the application as a `.3dsx` file.
     fn callback(&self, config: &Option<CTRConfig>) {
         if let Some(config) = config {
-            eprintln!("Building smdh: {}", config.path_smdh().display());
-            build_smdh(config, self.verbose);
+            eprintln!("Building smdh: {}", config.path_smdh());
+            config.build_smdh(self.verbose);
 
-            eprintln!("Building 3dsx: {}", config.path_3dsx().display());
+            eprintln!("Building 3dsx: {}", config.path_3dsx());
             build_3dsx(config, self.verbose);
         }
     }
