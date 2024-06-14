@@ -8,7 +8,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::{env, fmt, io, process};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::{Message, MetadataCommand};
+use cargo_metadata::{Artifact, Message, Package};
 use rustc_version::Channel;
 use semver::Version;
 use serde::Deserialize;
@@ -252,36 +252,10 @@ pub fn check_rust_version(input: &Input) {
 
 /// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
 /// The returned [`CTRConfig`] is then used for further building in and execution
-/// in [`build_smdh`], [`build_3dsx`], and [`link`].
-pub fn get_metadata(messages: &[Message]) -> CTRConfig {
-    let metadata = MetadataCommand::new()
-        .no_deps()
-        .exec()
-        .expect("Failed to get cargo metadata");
-
-    let mut package = None;
-    let mut artifact = None;
-
-    // Extract the final built executable. We may want to fail in cases where
-    // multiple executables, or none, were built?
-    for message in messages.iter().rev() {
-        if let Message::CompilerArtifact(art) = message {
-            if art.executable.is_some() {
-                package = Some(metadata[&art.package_id].clone());
-                artifact = Some(art.clone());
-
-                break;
-            }
-        }
-    }
-    if package.is_none() || artifact.is_none() {
-        eprintln!("No executable found from build command output!");
-        process::exit(1);
-    }
-
-    let (package, artifact) = (package.unwrap(), artifact.unwrap());
-
-    // for now assume a single "kind" since we only support one output artifact
+/// in [`CTRConfig::build_smdh`], [`build_3dsx`], and [`link`].
+pub fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
+    // For now, assume a single "kind" per artifact. It seems to be the case
+    // when a single executable is built anyway but maybe not in all cases.
     let name = match artifact.target.kind[0].as_ref() {
         "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
             format!("{} tests", artifact.target.name)
@@ -292,6 +266,9 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
         _ => artifact.target.name,
     };
 
+    // TODO: need to break down by target kind and name, e.g.
+    // [package.metadata.cargo-3ds.example.hello-world]
+    // Probably fall back to top level as well.
     let config = package
         .metadata
         .get("cargo-3ds")
