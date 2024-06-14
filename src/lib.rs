@@ -8,9 +8,10 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::{env, fmt, io, process};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::{Message, MetadataCommand, Package};
+use cargo_metadata::{Message, MetadataCommand};
 use rustc_version::Channel;
 use semver::Version;
+use serde::Deserialize;
 use tee::TeeReader;
 
 use crate::command::{CargoCmd, Input, Run, Test};
@@ -280,14 +281,6 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
 
     let (package, artifact) = (package.unwrap(), artifact.unwrap());
 
-    let mut icon_path = Utf8PathBuf::from("./icon.png");
-
-    if !icon_path.exists() {
-        icon_path = Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
-            .join("libctru")
-            .join("default_icon.png");
-    }
-
     // for now assume a single "kind" since we only support one output artifact
     let name = match artifact.target.kind[0].as_ref() {
         "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
@@ -299,28 +292,20 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
         _ => artifact.target.name,
     };
 
-    let romfs_dir = get_romfs_dir(&package);
+    let config = package
+        .metadata
+        .get("cargo-3ds")
+        .and_then(|c| CTRConfig::deserialize(c).ok())
+        .unwrap_or_default();
 
     CTRConfig {
         name,
-        authors: package.authors,
-        description: package
-            .description
-            .unwrap_or_else(|| String::from("Homebrew Application")),
-        icon_path,
-        romfs_dir,
+        authors: config.authors.or(Some(package.authors)),
+        description: config.description.or(package.description),
         manifest_dir: package.manifest_path.parent().unwrap().into(),
         target_path: artifact.executable.unwrap(),
+        ..config
     }
-}
-
-fn get_romfs_dir(package: &Package) -> Option<Utf8PathBuf> {
-    package
-        .metadata
-        .get("cargo-3ds")?
-        .get("romfs_dir")?
-        .as_str()
-        .map(Utf8PathBuf::from)
 }
 
 /// Builds the 3dsx using `3dsxtool`.
@@ -381,15 +366,39 @@ pub fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Deserialize, PartialEq, Eq)]
 pub struct CTRConfig {
-    name: String,
-    authors: Vec<String>,
-    description: String,
-    icon_path: Utf8PathBuf,
-    target_path: Utf8PathBuf,
-    manifest_dir: Utf8PathBuf,
+    /// The authors of the application, which will be joined by `", "` to form
+    /// the `Publisher` field in the SMDH format. If not specified, a single author
+    /// of "Unspecified Author" will be used.
+    authors: Option<Vec<String>>,
+
+    /// A description of the application, also called `Long Description` in the
+    /// SMDH format. The following values will be used in order of precedence:
+    /// - `cargo-3ds` metadata field
+    /// - `package.description` in Cargo.toml
+    /// - "Homebrew Application"
+    description: Option<String>,
+
+    /// The path to the app icon, defaulting to `$CARGO_MANIFEST_DIR/icon.png`
+    /// if it exists. If not specified, the devkitPro default icon is used.
+    icon_path: Option<Utf8PathBuf>,
+
+    /// The path to the romfs directory, defaulting to `$CARGO_MANIFEST_DIR/romfs`
+    /// if it exists, or unused otherwise. If a path is specified but does not
+    /// exist, an error occurs.
+    #[serde(alias = "romfs-dir")]
     romfs_dir: Option<Utf8PathBuf>,
+
+    // Remaining fields come from cargo metadata / build artifact output and
+    // cannot be customized by users in `package.metadata.cargo-3ds`. I suppose
+    // in theory we could allow name to be customizable if we wanted...
+    #[serde(skip)]
+    name: String,
+    #[serde(skip)]
+    target_path: Utf8PathBuf,
+    #[serde(skip)]
+    manifest_dir: Utf8PathBuf,
 }
 
 impl CTRConfig {
@@ -409,22 +418,31 @@ impl CTRConfig {
             .join(self.romfs_dir.as_deref().unwrap_or(Utf8Path::new("romfs")))
     }
 
+    // as standard with the devkitPRO toolchain
+    const DEFAULT_AUTHOR: &'static str = "Unspecified Author";
+    const DEFAULT_DESCRIPTION: &'static str = "Homebrew Application";
+
     /// Builds the smdh using `smdhtool`.
     /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
     pub fn build_smdh(&self, verbose: bool) {
-        let author = if self.authors.is_empty() {
-            String::from("Unspecified Author") // as standard with the devkitPRO toolchain
+        let description = self
+            .description
+            .as_deref()
+            .unwrap_or(Self::DEFAULT_DESCRIPTION);
+
+        let publisher = if let Some(authors) = self.authors.as_ref() {
+            authors.join(", ")
         } else {
-            self.authors.join(", ")
+            Self::DEFAULT_AUTHOR.to_string()
         };
 
         let mut command = Command::new("smdhtool");
         command
             .arg("--create")
             .arg(&self.name)
-            .arg(&self.description)
-            .arg(author)
-            .arg(&self.icon_path)
+            .arg(description)
+            .arg(publisher)
+            .arg(self.icon_path())
             .arg(self.path_smdh())
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -442,6 +460,30 @@ impl CTRConfig {
 
         if !status.success() {
             process::exit(status.code().unwrap_or(1));
+        }
+    }
+
+    /// Possible cases:
+    /// - icon path specified (exit with error if doesn't exist)
+    /// - icon path unspecified, icon.png exists
+    /// - icon path unspecified, icon.png does not exist
+    fn icon_path(&self) -> Utf8PathBuf {
+        let abs_path = self.manifest_dir.join(
+            self.icon_path
+                .as_deref()
+                .unwrap_or(Utf8Path::new("icon.png")),
+        );
+
+        if abs_path.is_file() {
+            abs_path
+        } else if self.icon_path.is_some() {
+            eprintln!("Specified icon path does not exist: {abs_path}");
+            process::exit(1);
+        } else {
+            // We assume this default icon will always exist as part of the toolchain
+            Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
+                .join("libctru")
+                .join("default_icon.png")
         }
     }
 }
