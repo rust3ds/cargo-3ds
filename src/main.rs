@@ -18,10 +18,11 @@ fn main() {
         }
     };
 
-    let metadata = cargo_metadata::MetadataCommand::new()
-        .no_deps()
-        .exec()
-        .unwrap();
+    let metadata = if input.cmd.should_build_3dsx() {
+        cargo_metadata::MetadataCommand::new().no_deps().exec().ok()
+    } else {
+        None
+    };
 
     let (status, messages) = run_cargo(&input, message_format);
 
@@ -29,5 +30,5 @@ fn main() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    input.cmd.run_callback(&messages, &metadata);
+    input.cmd.run_callbacks(&messages, &metadata);
 }
