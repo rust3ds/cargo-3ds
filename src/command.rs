@@ -320,14 +320,21 @@ impl CargoCmd {
             // If we produced one executable, we will attempt to run that one
             _ if configs.len() == 1 => configs.remove(0),
 
-            // --no-run can produce any number of executables
+            // --no-run may produce any number of executables, and we skip the callback
             Self::Test(Test { no_run: true, .. }) => return,
 
-            // Config is ignored by the New callback, using default is fine
+            // If using custom runners, they may be able to handle multiple executables,
+            // and we also want to skip our own callback. `cargo run` also has its own
+            // logic to disallow multiple executables.
+            Self::Test(Test { run_args: run, .. }) | Self::Run(run) if run.use_custom_runner() => {
+                return
+            }
+
+            // Config is ignored by the New callback, using default is fine.
             Self::New(_) => CTRConfig::default(),
 
-            // Otherwise, print an error and exit
-            _ => {
+            // Otherwise (configs.len() != 1) print an error and exit
+            Self::Test(_) | Self::Run(_) => {
                 let paths: Vec<_> = configs.into_iter().map(|c| c.path_3dsx()).collect();
                 let names: Vec<_> = paths.iter().filter_map(|p| p.file_name()).collect();
                 eprintln!(
@@ -336,6 +343,8 @@ impl CargoCmd {
                 );
                 process::exit(1);
             }
+
+            _ => return,
         };
 
         self.run_callback(&config);
@@ -440,10 +449,8 @@ impl Callbacks for Run {
     ///
     /// This callback handles launching the application via `3dslink`.
     fn run_callback(&self, config: &CTRConfig) {
-        if !self.use_custom_runner() {
-            eprintln!("Running 3dslink");
-            link(config, self, self.build_args.verbose);
-        }
+        eprintln!("Running 3dslink");
+        link(config, self, self.build_args.verbose);
     }
 }
 
