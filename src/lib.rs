@@ -413,13 +413,18 @@ impl CTRConfig {
             Self::DEFAULT_AUTHOR.to_string()
         };
 
+        let icon_path = self.icon_path().unwrap_or_else(|err| {
+            eprintln!("Icon at {err} does not exist");
+            process::exit(1);
+        });
+
         let mut command = Command::new("smdhtool");
         command
             .arg("--create")
             .arg(&self.name)
             .arg(description)
             .arg(publisher)
-            .arg(self.icon_path())
+            .arg(icon_path)
             .arg(self.path_smdh())
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -440,27 +445,30 @@ impl CTRConfig {
         }
     }
 
-    /// Possible cases:
-    /// - icon path specified (exit with error if doesn't exist)
-    /// - icon path unspecified, icon.png exists
-    /// - icon path unspecified, icon.png does not exist
-    fn icon_path(&self) -> Utf8PathBuf {
-        let abs_path = self.manifest_dir.join(
-            self.icon_path
-                .as_deref()
-                .unwrap_or(Utf8Path::new("icon.png")),
-        );
-
-        if abs_path.is_file() {
-            abs_path
-        } else if self.icon_path.is_some() {
-            eprintln!("Specified icon path does not exist: {abs_path}");
-            process::exit(1);
+    /// Get the path to the icon to be used for the SMDH output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the specified (or fallback) path does not exist.
+    /// The contained path is the path we tried to use.
+    fn icon_path(&self) -> Result<Utf8PathBuf, Utf8PathBuf> {
+        let path = if let Some(path) = &self.icon_path {
+            self.manifest_dir.join(path)
         } else {
-            // We assume this default icon will always exist as part of the toolchain
+            let path = self.manifest_dir.join("icon.png");
+            if path.exists() {
+                return Ok(path);
+            }
+
             Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
                 .join("libctru")
                 .join("default_icon.png")
+        };
+
+        if path.exists() {
+            Ok(path)
+        } else {
+            Err(path)
         }
     }
 }
