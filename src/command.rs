@@ -302,7 +302,13 @@ impl CargoCmd {
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
     pub fn run_callbacks(&self, messages: &[Message], metadata: &Option<Metadata>) {
-        let mut configs = Vec::new();
+        let max_artifact_count = if let Some(metadata) = metadata {
+            metadata.packages.iter().map(|pkg| pkg.targets.len()).sum()
+        } else {
+            0
+        };
+
+        let mut configs = Vec::with_capacity(max_artifact_count);
 
         // Process the metadata only for commands that have it/use it
         if self.should_build_3dsx() {
