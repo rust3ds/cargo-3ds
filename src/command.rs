@@ -318,13 +318,13 @@ impl CargoCmd {
 
         let config = match self {
             // If we produced one executable, we will attempt to run that one
-            _ if configs.len() == 1 => &configs[0],
+            _ if configs.len() == 1 => configs.remove(0),
 
             // --no-run can produce any number of executables
             Self::Test(Test { no_run: true, .. }) => return,
 
             // Config is ignored by the New callback, using default is fine
-            Self::New(_) => &CTRConfig::default(),
+            Self::New(_) => CTRConfig::default(),
 
             // Otherwise, print an error and exit
             _ => {
@@ -338,7 +338,7 @@ impl CargoCmd {
             }
         };
 
-        self.run_callback(config);
+        self.run_callback(&config);
     }
 
     /// Generate a .3dsx for every executable artifact within the workspace that

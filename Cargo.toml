@@ -9,7 +9,6 @@ categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 exclude = [".github"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.79"
 
 [dependencies]
 cargo_metadata = "0.14.0"
