@@ -8,9 +8,10 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::{env, fmt, io, process};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::{Message, MetadataCommand, Package};
+use cargo_metadata::{Artifact, Message, Package};
 use rustc_version::Channel;
 use semver::Version;
+use serde::Deserialize;
 use tee::TeeReader;
 
 use crate::command::{CargoCmd, Input, Run, Test};
@@ -251,44 +252,10 @@ pub fn check_rust_version(input: &Input) {
 
 /// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
 /// The returned [`CTRConfig`] is then used for further building in and execution
-/// in [`build_smdh`], [`build_3dsx`], and [`link`].
-pub fn get_metadata(messages: &[Message]) -> CTRConfig {
-    let metadata = MetadataCommand::new()
-        .no_deps()
-        .exec()
-        .expect("Failed to get cargo metadata");
-
-    let mut package = None;
-    let mut artifact = None;
-
-    // Extract the final built executable. We may want to fail in cases where
-    // multiple executables, or none, were built?
-    for message in messages.iter().rev() {
-        if let Message::CompilerArtifact(art) = message {
-            if art.executable.is_some() {
-                package = Some(metadata[&art.package_id].clone());
-                artifact = Some(art.clone());
-
-                break;
-            }
-        }
-    }
-    if package.is_none() || artifact.is_none() {
-        eprintln!("No executable found from build command output!");
-        process::exit(1);
-    }
-
-    let (package, artifact) = (package.unwrap(), artifact.unwrap());
-
-    let mut icon_path = Utf8PathBuf::from("./icon.png");
-
-    if !icon_path.exists() {
-        icon_path = Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
-            .join("libctru")
-            .join("default_icon.png");
-    }
-
-    // for now assume a single "kind" since we only support one output artifact
+/// in [`CTRConfig::build_smdh`], [`build_3dsx`], and [`link`].
+pub fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
+    // For now, assume a single "kind" per artifact. It seems to be the case
+    // when a single executable is built anyway but maybe not in all cases.
     let name = match artifact.target.kind[0].as_ref() {
         "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
             format!("{} tests", artifact.target.name)
@@ -299,28 +266,23 @@ pub fn get_metadata(messages: &[Message]) -> CTRConfig {
         _ => artifact.target.name,
     };
 
-    let romfs_dir = get_romfs_dir(&package);
+    // TODO(#62): need to break down by target kind and name, e.g.
+    // [package.metadata.cargo-3ds.example.hello-world]
+    // Probably fall back to top level as well.
+    let config = package
+        .metadata
+        .get("cargo-3ds")
+        .and_then(|c| CTRConfig::deserialize(c).ok())
+        .unwrap_or_default();
 
     CTRConfig {
         name,
-        authors: package.authors,
-        description: package
-            .description
-            .unwrap_or_else(|| String::from("Homebrew Application")),
-        icon_path,
-        romfs_dir,
+        authors: config.authors.or(Some(package.authors)),
+        description: config.description.or(package.description),
         manifest_dir: package.manifest_path.parent().unwrap().into(),
         target_path: artifact.executable.unwrap(),
+        ..config
     }
-}
-
-fn get_romfs_dir(package: &Package) -> Option<Utf8PathBuf> {
-    package
-        .metadata
-        .get("cargo-3ds")?
-        .get("romfs_dir")?
-        .as_str()
-        .map(Utf8PathBuf::from)
 }
 
 /// Builds the 3dsx using `3dsxtool`.
@@ -381,15 +343,39 @@ pub fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Deserialize, PartialEq, Eq)]
 pub struct CTRConfig {
-    name: String,
-    authors: Vec<String>,
-    description: String,
-    icon_path: Utf8PathBuf,
-    target_path: Utf8PathBuf,
-    manifest_dir: Utf8PathBuf,
+    /// The authors of the application, which will be joined by `", "` to form
+    /// the `Publisher` field in the SMDH format. If not specified, a single author
+    /// of "Unspecified Author" will be used.
+    authors: Option<Vec<String>>,
+
+    /// A description of the application, also called `Long Description` in the
+    /// SMDH format. The following values will be used in order of precedence:
+    /// - `cargo-3ds` metadata field
+    /// - `package.description` in Cargo.toml
+    /// - "Homebrew Application"
+    description: Option<String>,
+
+    /// The path to the app icon, defaulting to `$CARGO_MANIFEST_DIR/icon.png`
+    /// if it exists. If not specified, the devkitPro default icon is used.
+    icon_path: Option<Utf8PathBuf>,
+
+    /// The path to the romfs directory, defaulting to `$CARGO_MANIFEST_DIR/romfs`
+    /// if it exists, or unused otherwise. If a path is specified but does not
+    /// exist, an error occurs.
+    #[serde(alias = "romfs-dir")]
     romfs_dir: Option<Utf8PathBuf>,
+
+    // Remaining fields come from cargo metadata / build artifact output and
+    // cannot be customized by users in `package.metadata.cargo-3ds`. I suppose
+    // in theory we could allow name to be customizable if we wanted...
+    #[serde(skip)]
+    name: String,
+    #[serde(skip)]
+    target_path: Utf8PathBuf,
+    #[serde(skip)]
+    manifest_dir: Utf8PathBuf,
 }
 
 impl CTRConfig {
@@ -409,22 +395,36 @@ impl CTRConfig {
             .join(self.romfs_dir.as_deref().unwrap_or(Utf8Path::new("romfs")))
     }
 
+    // as standard with the devkitPRO toolchain
+    const DEFAULT_AUTHOR: &'static str = "Unspecified Author";
+    const DEFAULT_DESCRIPTION: &'static str = "Homebrew Application";
+
     /// Builds the smdh using `smdhtool`.
     /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
     pub fn build_smdh(&self, verbose: bool) {
-        let author = if self.authors.is_empty() {
-            String::from("Unspecified Author") // as standard with the devkitPRO toolchain
+        let description = self
+            .description
+            .as_deref()
+            .unwrap_or(Self::DEFAULT_DESCRIPTION);
+
+        let publisher = if let Some(authors) = self.authors.as_ref() {
+            authors.join(", ")
         } else {
-            self.authors.join(", ")
+            Self::DEFAULT_AUTHOR.to_string()
         };
+
+        let icon_path = self.icon_path().unwrap_or_else(|err_path| {
+            eprintln!("Icon at {err_path} does not exist");
+            process::exit(1);
+        });
 
         let mut command = Command::new("smdhtool");
         command
             .arg("--create")
             .arg(&self.name)
-            .arg(&self.description)
-            .arg(author)
-            .arg(&self.icon_path)
+            .arg(description)
+            .arg(publisher)
+            .arg(icon_path)
             .arg(self.path_smdh())
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -442,6 +442,33 @@ impl CTRConfig {
 
         if !status.success() {
             process::exit(status.code().unwrap_or(1));
+        }
+    }
+
+    /// Get the path to the icon to be used for the SMDH output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the specified (or fallback) path does not exist.
+    /// The contained path is the path we tried to use.
+    fn icon_path(&self) -> Result<Utf8PathBuf, Utf8PathBuf> {
+        let path = if let Some(path) = &self.icon_path {
+            self.manifest_dir.join(path)
+        } else {
+            let path = self.manifest_dir.join("icon.png");
+            if path.exists() {
+                return Ok(path);
+            }
+
+            Utf8PathBuf::from(env::var("DEVKITPRO").unwrap())
+                .join("libctru")
+                .join("default_icon.png")
+        };
+
+        if path.exists() {
+            Ok(path)
+        } else {
+            Err(path)
         }
     }
 }

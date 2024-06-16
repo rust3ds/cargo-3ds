@@ -18,11 +18,23 @@ fn main() {
         }
     };
 
+    let metadata = if input.cmd.should_build_3dsx() {
+        match cargo_metadata::MetadataCommand::new().no_deps().exec() {
+            Ok(metadata) => Some(metadata),
+            Err(err) => {
+                eprintln!("Warning: failed to gather cargo metadata for the project: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let (status, messages) = run_cargo(&input, message_format);
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
     }
 
-    input.cmd.run_callback(&messages);
+    input.cmd.run_callbacks(&messages, metadata.as_ref());
 }

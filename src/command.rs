@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::Read;
-use std::process::Stdio;
+use std::process::{self, Stdio};
 use std::sync::OnceLock;
 
-use cargo_metadata::Message;
+use cargo_metadata::{Message, Metadata};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, cargo, get_metadata, link, print_command, CTRConfig};
+use crate::{build_3dsx, cargo, get_artifact_config, link, print_command, CTRConfig};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -81,6 +81,12 @@ pub struct RemainingArgs {
         value_name = "CARGO_ARGS"
     )]
     args: Vec<String>,
+}
+
+#[allow(unused_variables)]
+trait Callbacks {
+    fn build_callback(&self, config: &CTRConfig) {}
+    fn run_callback(&self, config: &CTRConfig) {}
 }
 
 #[derive(Args, Debug)]
@@ -295,23 +301,93 @@ impl CargoCmd {
     ///
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
-    pub fn run_callback(&self, messages: &[Message]) {
-        // Process the metadata only for commands that have it/use it
-        let config = if self.should_build_3dsx() {
-            eprintln!("Getting metadata");
+    pub fn run_callbacks(&self, messages: &[Message], metadata: Option<&Metadata>) {
+        let configs = metadata
+            .map(|metadata| self.build_callbacks(messages, metadata))
+            .unwrap_or_default();
 
-            Some(get_metadata(messages))
-        } else {
-            None
+        let config = match self {
+            // If we produced one executable, we will attempt to run that one
+            _ if configs.len() == 1 => configs.into_iter().next().unwrap(),
+
+            // --no-run may produce any number of executables, and we skip the callback
+            Self::Test(Test { no_run: true, .. }) => return,
+
+            // If using custom runners, they may be able to handle multiple executables,
+            // and we also want to skip our own callback. `cargo run` also has its own
+            // logic to disallow multiple executables.
+            Self::Test(Test { run_args: run, .. }) | Self::Run(run) if run.use_custom_runner() => {
+                return
+            }
+
+            // Config is ignored by the New callback, using default is fine.
+            Self::New(_) => CTRConfig::default(),
+
+            // Otherwise (configs.len() != 1) print an error and exit
+            Self::Test(_) | Self::Run(_) => {
+                let paths: Vec<_> = configs.into_iter().map(|c| c.path_3dsx()).collect();
+                let names: Vec<_> = paths.iter().filter_map(|p| p.file_name()).collect();
+                eprintln!(
+                    "Error: expected exactly one (1) executable to run, got {}: {names:?}",
+                    paths.len(),
+                );
+                process::exit(1);
+            }
+
+            _ => return,
         };
 
-        // Run callback only for commands that use it
+        self.run_callback(&config);
+    }
+
+    /// Generate a .3dsx for every executable artifact within the workspace that
+    /// was built by the cargo command.
+    fn build_callbacks(&self, messages: &[Message], metadata: &Metadata) -> Vec<CTRConfig> {
+        let max_artifact_count = metadata.packages.iter().map(|pkg| pkg.targets.len()).sum();
+        let mut configs = Vec::with_capacity(max_artifact_count);
+
+        for message in messages {
+            let Message::CompilerArtifact(artifact) = message else {
+                continue;
+            };
+
+            if artifact.executable.is_none()
+                || !metadata.workspace_members.contains(&artifact.package_id)
+            {
+                continue;
+            }
+
+            let package = &metadata[&artifact.package_id];
+            let config = get_artifact_config(package.clone(), artifact.clone());
+
+            self.build_callback(&config);
+
+            configs.push(config);
+        }
+
+        configs
+    }
+
+    fn inner_callback(&self) -> Option<&dyn Callbacks> {
         match self {
-            Self::Build(cmd) => cmd.callback(&config),
-            Self::Run(cmd) => cmd.callback(&config),
-            Self::Test(cmd) => cmd.callback(&config),
-            Self::New(cmd) => cmd.callback(),
-            _ => (),
+            Self::Build(cmd) => Some(cmd),
+            Self::Run(cmd) => Some(cmd),
+            Self::Test(cmd) => Some(cmd),
+            _ => None,
+        }
+    }
+}
+
+impl Callbacks for CargoCmd {
+    fn build_callback(&self, config: &CTRConfig) {
+        if let Some(cb) = self.inner_callback() {
+            cb.build_callback(config);
+        }
+    }
+
+    fn run_callback(&self, config: &CTRConfig) {
+        if let Some(cb) = self.inner_callback() {
+            cb.run_callback(config);
         }
     }
 }
@@ -342,18 +418,30 @@ impl RemainingArgs {
     }
 }
 
-impl Build {
+impl Callbacks for Build {
     /// Callback for `cargo 3ds build`.
     ///
     /// This callback handles building the application as a `.3dsx` file.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        if let Some(config) = config {
-            eprintln!("Building smdh: {}", config.path_smdh());
-            config.build_smdh(self.verbose);
+    fn build_callback(&self, config: &CTRConfig) {
+        eprintln!("Building smdh: {}", config.path_smdh());
+        config.build_smdh(self.verbose);
 
-            eprintln!("Building 3dsx: {}", config.path_3dsx());
-            build_3dsx(config, self.verbose);
-        }
+        eprintln!("Building 3dsx: {}", config.path_3dsx());
+        build_3dsx(config, self.verbose);
+    }
+}
+
+impl Callbacks for Run {
+    fn build_callback(&self, config: &CTRConfig) {
+        self.build_args.build_callback(config);
+    }
+
+    /// Callback for `cargo 3ds run`.
+    ///
+    /// This callback handles launching the application via `3dslink`.
+    fn run_callback(&self, config: &CTRConfig) {
+        eprintln!("Running 3dslink");
+        link(config, self, self.build_args.verbose);
     }
 }
 
@@ -399,21 +487,6 @@ impl Run {
         args
     }
 
-    /// Callback for `cargo 3ds run`.
-    ///
-    /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        // Run the normal "build" callback
-        self.build_args.callback(config);
-
-        if !self.use_custom_runner() {
-            if let Some(cfg) = config {
-                eprintln!("Running 3dslink");
-                link(cfg, self, self.build_args.verbose);
-            }
-        }
-    }
-
     /// Returns whether the cargo environment has `target.armv6k-nintendo-3ds.runner`
     /// configured. This will only be checked once during the lifetime of the program,
     /// and takes into account the usual ways Cargo looks for its
@@ -457,20 +530,22 @@ impl Run {
     }
 }
 
-impl Test {
+impl Callbacks for Test {
+    fn build_callback(&self, config: &CTRConfig) {
+        self.run_args.build_callback(config);
+    }
+
     /// Callback for `cargo 3ds test`.
     ///
     /// This callback handles launching the application via `3dslink`.
-    fn callback(&self, config: &Option<CTRConfig>) {
-        if self.no_run {
-            // If the tests don't have to run, use the "build" callback
-            self.run_args.build_args.callback(config);
-        } else {
-            // If the tests have to run, use the "run" callback
-            self.run_args.callback(config);
+    fn run_callback(&self, config: &CTRConfig) {
+        if !self.no_run {
+            self.run_args.run_callback(config);
         }
     }
+}
 
+impl Test {
     fn should_run(&self) -> bool {
         self.run_args.use_custom_runner() && !self.no_run
     }
@@ -540,11 +615,11 @@ fn main() {
 }
 "#;
 
-impl New {
+impl Callbacks for New {
     /// Callback for `cargo 3ds new`.
     ///
     /// This callback handles the custom environment modifications when creating a new 3DS project.
-    fn callback(&self) {
+    fn run_callback(&self, _: &CTRConfig) {
         // Commmit changes to the project only if is meant to be a binary
         if self.cargo_args.args.contains(&"--lib".to_string()) {
             return;
