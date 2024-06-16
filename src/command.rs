@@ -301,24 +301,14 @@ impl CargoCmd {
     ///
     /// - `cargo 3ds build` and other "build" commands will use their callbacks to build the final `.3dsx` file and link it.
     /// - `cargo 3ds new` and other generic commands will use their callbacks to make 3ds-specific changes to the environment.
-    pub fn run_callbacks(&self, messages: &[Message], metadata: &Option<Metadata>) {
-        let max_artifact_count = if let Some(metadata) = metadata {
-            metadata.packages.iter().map(|pkg| pkg.targets.len()).sum()
-        } else {
-            0
-        };
-
-        let mut configs = Vec::with_capacity(max_artifact_count);
-
-        // Process the metadata only for commands that have it/use it
-        if self.should_build_3dsx() {
-            // unwrap: we should always have metadata if the command should compile something
-            configs = self.build_callbacks(messages, metadata.as_ref().unwrap());
-        }
+    pub fn run_callbacks(&self, messages: &[Message], metadata: Option<&Metadata>) {
+        let configs = metadata
+            .map(|metadata| self.build_callbacks(messages, metadata))
+            .unwrap_or_default();
 
         let config = match self {
             // If we produced one executable, we will attempt to run that one
-            _ if configs.len() == 1 => configs.remove(0),
+            _ if configs.len() == 1 => configs.into_iter().next().unwrap(),
 
             // --no-run may produce any number of executables, and we skip the callback
             Self::Test(Test { no_run: true, .. }) => return,
@@ -353,7 +343,8 @@ impl CargoCmd {
     /// Generate a .3dsx for every executable artifact within the workspace that
     /// was built by the cargo command.
     fn build_callbacks(&self, messages: &[Message], metadata: &Metadata) -> Vec<CTRConfig> {
-        let mut configs = Vec::new();
+        let max_artifact_count = metadata.packages.iter().map(|pkg| pkg.targets.len()).sum();
+        let mut configs = Vec::with_capacity(max_artifact_count);
 
         for message in messages {
             let Message::CompilerArtifact(artifact) = message else {
@@ -377,25 +368,25 @@ impl CargoCmd {
         configs
     }
 
-    fn inner_callbacks(&self) -> Option<&dyn Callbacks> {
-        Some(match self {
-            Self::Build(cmd) => cmd,
-            Self::Run(cmd) => cmd,
-            Self::Test(cmd) => cmd,
-            _ => return None,
-        })
+    fn inner_callback(&self) -> Option<&dyn Callbacks> {
+        match self {
+            Self::Build(cmd) => Some(cmd),
+            Self::Run(cmd) => Some(cmd),
+            Self::Test(cmd) => Some(cmd),
+            _ => None,
+        }
     }
 }
 
 impl Callbacks for CargoCmd {
     fn build_callback(&self, config: &CTRConfig) {
-        if let Some(cb) = self.inner_callbacks() {
+        if let Some(cb) = self.inner_callback() {
             cb.build_callback(config);
         }
     }
 
     fn run_callback(&self, config: &CTRConfig) {
-        if let Some(cb) = self.inner_callbacks() {
+        if let Some(cb) = self.inner_callback() {
             cb.run_callback(config);
         }
     }

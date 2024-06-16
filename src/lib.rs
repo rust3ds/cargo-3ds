@@ -266,7 +266,7 @@ pub fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
         _ => artifact.target.name,
     };
 
-    // TODO: need to break down by target kind and name, e.g.
+    // TODO(#62): need to break down by target kind and name, e.g.
     // [package.metadata.cargo-3ds.example.hello-world]
     // Probably fall back to top level as well.
     let config = package
@@ -413,8 +413,8 @@ impl CTRConfig {
             Self::DEFAULT_AUTHOR.to_string()
         };
 
-        let icon_path = self.icon_path().unwrap_or_else(|err| {
-            eprintln!("Icon at {err} does not exist");
+        let icon_path = self.icon_path().unwrap_or_else(|err_path| {
+            eprintln!("Icon at {err_path} does not exist");
             process::exit(1);
         });
 
