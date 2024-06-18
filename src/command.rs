@@ -225,16 +225,6 @@ impl CargoCmd {
         }
     }
 
-    /// Whether or not the resulting executable should be sent to the 3DS with
-    /// `3dslink`.
-    pub fn should_link_to_device(&self) -> bool {
-        match self {
-            Self::Test(Test { no_run: true, .. }) => false,
-            Self::Run(run) | Self::Test(Test { run_args: run, .. }) => !run.use_custom_runner(),
-            _ => false,
-        }
-    }
-
     pub const DEFAULT_MESSAGE_FORMAT: &'static str = "json-render-diagnostics";
 
     pub fn extract_message_format(&mut self) -> Result<Option<String>, String> {
@@ -440,8 +430,10 @@ impl Callbacks for Run {
     ///
     /// This callback handles launching the application via `3dslink`.
     fn run_callback(&self, config: &CTRConfig) {
-        eprintln!("Running 3dslink");
-        link(config, self, self.build_args.verbose);
+        if !self.use_custom_runner() {
+            eprintln!("Running 3dslink");
+            link(config, self, self.build_args.verbose);
+        }
     }
 }
 
