@@ -107,7 +107,7 @@ fn should_use_ctru_debuginfo(cargo_cmd: &Command, verbose: bool) -> bool {
 ///
 /// For "build" commands (which compile code, such as `cargo 3ds build` or `cargo 3ds clippy`),
 /// if there is no pre-built std detected in the sysroot, `build-std` will be used instead.
-pub fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Command {
+pub(crate) fn make_cargo_command(input: &Input, message_format: &Option<String>) -> Command {
     let devkitpro =
         env::var("DEVKITPRO").expect("DEVKITPRO is not defined as an environment variable");
     // TODO: should we actually prepend the user's RUSTFLAGS for linking order? not sure
@@ -195,7 +195,7 @@ fn print_command(command: &Command) {
 }
 
 /// Finds the sysroot path of the current toolchain
-pub fn find_sysroot() -> PathBuf {
+pub(crate) fn find_sysroot() -> PathBuf {
     let sysroot = env::var("SYSROOT").ok().unwrap_or_else(|| {
         let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
 
@@ -253,7 +253,7 @@ pub fn check_rust_version(input: &Input) {
 /// Parses messages returned by "build" cargo commands (such as `cargo 3ds build` or `cargo 3ds run`).
 /// The returned [`CTRConfig`] is then used for further building in and execution
 /// in [`CTRConfig::build_smdh`], [`build_3dsx`], and [`link`].
-pub fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
+pub(crate) fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
     // For now, assume a single "kind" per artifact. It seems to be the case
     // when a single executable is built anyway but maybe not in all cases.
     let name = match artifact.target.kind[0].as_ref() {
@@ -287,7 +287,7 @@ pub fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
 
 /// Builds the 3dsx using `3dsxtool`.
 /// This will fail if `3dsxtool` is not within the running directory or in a directory found in $PATH
-pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
+pub(crate) fn build_3dsx(config: &CTRConfig, verbose: bool) {
     let mut command = Command::new("3dsxtool");
     command
         .arg(&config.target_path)
@@ -323,7 +323,7 @@ pub fn build_3dsx(config: &CTRConfig, verbose: bool) {
 
 /// Link the generated 3dsx to a 3ds to execute and test using `3dslink`.
 /// This will fail if `3dslink` is not within the running directory or in a directory found in $PATH
-pub fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
+pub(crate) fn link(config: &CTRConfig, run_args: &Run, verbose: bool) {
     let mut command = Command::new("3dslink");
     command
         .arg(config.path_3dsx())
@@ -380,17 +380,17 @@ pub struct CTRConfig {
 
 impl CTRConfig {
     /// Get the path to the output `.3dsx` file.
-    pub fn path_3dsx(&self) -> Utf8PathBuf {
+    pub(crate) fn path_3dsx(&self) -> Utf8PathBuf {
         self.target_path.with_extension("3dsx")
     }
 
     /// Get the path to the output `.smdh` file.
-    pub fn path_smdh(&self) -> Utf8PathBuf {
+    pub(crate) fn path_smdh(&self) -> Utf8PathBuf {
         self.target_path.with_extension("smdh")
     }
 
     /// Get the absolute path to the romfs directory, defaulting to `romfs` if not specified.
-    pub fn romfs_dir(&self) -> Utf8PathBuf {
+    pub(crate) fn romfs_dir(&self) -> Utf8PathBuf {
         self.manifest_dir
             .join(self.romfs_dir.as_deref().unwrap_or(Utf8Path::new("romfs")))
     }
@@ -401,7 +401,7 @@ impl CTRConfig {
 
     /// Builds the smdh using `smdhtool`.
     /// This will fail if `smdhtool` is not within the running directory or in a directory found in $PATH
-    pub fn build_smdh(&self, verbose: bool) {
+    pub(crate) fn build_smdh(&self, verbose: bool) {
         let description = self
             .description
             .as_deref()

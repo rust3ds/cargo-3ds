@@ -162,7 +162,7 @@ pub struct New {
 
 impl CargoCmd {
     /// Returns the additional arguments run by the "official" cargo subcommand.
-    pub fn cargo_args(&self) -> Vec<String> {
+    pub(crate) fn cargo_args(&self) -> Vec<String> {
         match self {
             CargoCmd::Build(build) => build.passthrough.cargo_args(),
             CargoCmd::Run(run) => run.build_args.passthrough.cargo_args(),
@@ -185,7 +185,7 @@ impl CargoCmd {
     /// This is not equivalent to the lowercase name of the [`CargoCmd`] variant.
     /// Commands may use different commands under the hood to function (e.g. [`CargoCmd::Run`] uses `build`
     /// if no custom runner is configured).
-    pub fn subcommand_name(&self) -> &str {
+    pub(crate) fn subcommand_name(&self) -> &str {
         match self {
             CargoCmd::Build(_) => "build",
             CargoCmd::Run(run) => {
@@ -202,7 +202,7 @@ impl CargoCmd {
     }
 
     /// Whether or not this command should compile any code, and thus needs import the custom environment configuration (e.g. target spec).
-    pub fn should_compile(&self) -> bool {
+    pub(crate) fn should_compile(&self) -> bool {
         matches!(
             self,
             Self::Build(_) | Self::Run(_) | Self::Test(_) | Self::Passthrough(_)
@@ -221,16 +221,6 @@ impl CargoCmd {
                     true
                 }
             }
-            _ => false,
-        }
-    }
-
-    /// Whether or not the resulting executable should be sent to the 3DS with
-    /// `3dslink`.
-    pub fn should_link_to_device(&self) -> bool {
-        match self {
-            Self::Test(Test { no_run: true, .. }) => false,
-            Self::Run(run) | Self::Test(Test { run_args: run, .. }) => !run.use_custom_runner(),
             _ => false,
         }
     }
@@ -394,12 +384,12 @@ impl Callbacks for CargoCmd {
 
 impl RemainingArgs {
     /// Get the args to be passed to `cargo`.
-    pub fn cargo_args(&self) -> Vec<String> {
+    pub(crate) fn cargo_args(&self) -> Vec<String> {
         self.split_args().0
     }
 
     /// Get the args to be passed to the executable itself (not `cargo`).
-    pub fn exe_args(&self) -> Vec<String> {
+    pub(crate) fn exe_args(&self) -> Vec<String> {
         self.split_args().1
     }
 
@@ -440,14 +430,16 @@ impl Callbacks for Run {
     ///
     /// This callback handles launching the application via `3dslink`.
     fn run_callback(&self, config: &CTRConfig) {
-        eprintln!("Running 3dslink");
-        link(config, self, self.build_args.verbose);
+        if !self.use_custom_runner() {
+            eprintln!("Running 3dslink");
+            link(config, self, self.build_args.verbose);
+        }
     }
 }
 
 impl Run {
     /// Get the args to pass to `3dslink` based on these options.
-    pub fn get_3dslink_args(&self) -> Vec<String> {
+    pub(crate) fn get_3dslink_args(&self) -> Vec<String> {
         let mut args = Vec::new();
 
         if let Some(address) = self.address {
@@ -495,7 +487,7 @@ impl Run {
     /// - `.cargo/config.toml`
     /// - Environment variables
     /// - Command-line `--config` overrides
-    pub fn use_custom_runner(&self) -> bool {
+    pub(crate) fn use_custom_runner(&self) -> bool {
         static HAS_RUNNER: OnceLock<bool> = OnceLock::new();
 
         let &custom_runner_configured = HAS_RUNNER.get_or_init(|| {

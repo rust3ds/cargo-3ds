@@ -23,7 +23,7 @@ impl UnitGraph {
     /// build and the graph is output instead.
     ///
     /// See <https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#unit-graph>.
-    pub fn from_cargo(cargo_cmd: &Command, verbose: bool) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn from_cargo(cargo_cmd: &Command, verbose: bool) -> Result<Self, Box<dyn Error>> {
         // Since Command isn't Clone, copy it "by hand", by copying its args and envs
         let mut cmd = Command::new(cargo_cmd.get_program());
 
