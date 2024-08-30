@@ -87,7 +87,7 @@ fn should_use_ctru_debuginfo(cargo_cmd: &Command, verbose: bool) -> bool {
             let Some(unit) = unit_graph
                 .units
                 .iter()
-                .find(|unit| unit.target.name == "ctru-sys")
+                .find(|unit| unit.target.name == "ctru_sys")
             else {
                 eprintln!("Warning: unable to check if `ctru` debuginfo should be linked: `ctru-sys` not found");
                 return false;
@@ -136,7 +136,12 @@ pub(crate) fn make_cargo_command(input: &Input, message_format: &Option<String>)
 
         let sysroot = find_sysroot();
         if !sysroot.join("lib/rustlib/armv6k-nintendo-3ds").exists() {
-            eprintln!("No pre-build std found, using build-std");
+            // Under most circumstances, the user will just use build-std for convenience.
+            // As such, we warn about the use of build-std only if really asked for.
+            if input.verbose {
+                eprintln!("No pre-build std found, using build-std");
+            }
+
             // Always building the test crate is not ideal, but we don't know if the
             // crate being built uses #![feature(test)], so we build it just in case.
             command.arg("-Z").arg("build-std=std,test");
