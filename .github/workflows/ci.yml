@@ -43,7 +43,7 @@ jobs:
       matrix:
         toolchain:
           # Oldest supported nightly
-          - nightly-2024-09-1
+          - nightly-2024-09-01
           - nightly
 
     continue-on-error: ${{ matrix.toolchain == 'nightly' }}
