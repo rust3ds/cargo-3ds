@@ -363,6 +363,7 @@ impl CargoCmd {
             Self::Build(cmd) => Some(cmd),
             Self::Run(cmd) => Some(cmd),
             Self::Test(cmd) => Some(cmd),
+            Self::New(cmd) => Some(cmd),
             _ => None,
         }
     }
