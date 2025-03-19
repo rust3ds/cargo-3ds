@@ -262,7 +262,7 @@ pub(crate) fn get_artifact_config(package: Package, artifact: Artifact) -> CTRCo
     // For now, assume a single "kind" per artifact. It seems to be the case
     // when a single executable is built anyway but maybe not in all cases.
     let name = match artifact.target.kind[0].as_ref() {
-        "bin" | "lib" | "rlib" | "dylib" if artifact.target.test => {
+        "bin" | "lib" | "rlib" | "dylib" if artifact.profile.test => {
             format!("{} tests", artifact.target.name)
         }
         "example" => {
