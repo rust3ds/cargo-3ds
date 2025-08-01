@@ -8,7 +8,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::{env, fmt, io, process};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::{Artifact, Message, Package};
+use cargo_metadata::{Artifact, Message, Package, TargetKind::*};
 use rustc_version::Channel;
 use semver::Version;
 use serde::Deserialize;
@@ -89,7 +89,9 @@ fn should_use_ctru_debuginfo(cargo_cmd: &Command, verbose: bool) -> bool {
                 .iter()
                 .find(|unit| unit.target.name == "ctru_sys")
             else {
-                eprintln!("Warning: unable to check if `ctru` debuginfo should be linked: `ctru-sys` not found");
+                eprintln!(
+                    "Warning: unable to check if `ctru` debuginfo should be linked: `ctru-sys` not found"
+                );
                 return false;
             };
 
@@ -261,11 +263,11 @@ pub fn check_rust_version(input: &Input) {
 pub(crate) fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
     // For now, assume a single "kind" per artifact. It seems to be the case
     // when a single executable is built anyway but maybe not in all cases.
-    let name = match artifact.target.kind[0].as_ref() {
-        "bin" | "lib" | "rlib" | "dylib" if artifact.profile.test => {
+    let name = match artifact.target.kind[0] {
+        Bin | Lib | RLib | DyLib if artifact.profile.test => {
             format!("{} tests", artifact.target.name)
         }
-        "example" => {
+        Example => {
             format!("{} - {} example", artifact.target.name, package.name)
         }
         _ => artifact.target.name,
@@ -470,11 +472,7 @@ impl CTRConfig {
                 .join("default_icon.png")
         };
 
-        if path.exists() {
-            Ok(path)
-        } else {
-            Err(path)
-        }
+        if path.exists() { Ok(path) } else { Err(path) }
     }
 }
 
