@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use cargo_metadata::{Message, Metadata};
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build_3dsx, cargo, get_artifact_config, link, print_command, CTRConfig};
+use crate::{CTRConfig, build_3dsx, cargo, get_artifact_config, link, print_command};
 
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
@@ -307,7 +307,7 @@ impl CargoCmd {
             // and we also want to skip our own callback. `cargo run` also has its own
             // logic to disallow multiple executables.
             Self::Test(Test { run_args: run, .. }) | Self::Run(run) if run.use_custom_runner() => {
-                return
+                return;
             }
 
             // Config is ignored by the New callback, using default is fine.
@@ -509,7 +509,7 @@ impl Run {
             }
 
             // `cargo config get` exits zero if the config exists, or nonzero otherwise
-            cmd.status().map_or(false, |status| status.success())
+            cmd.status().is_ok_and(|status| status.success())
         });
 
         if self.build_args.verbose {
