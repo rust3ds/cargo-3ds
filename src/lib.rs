@@ -43,6 +43,35 @@ pub fn run_cargo(input: &Input, message_format: Option<String>) -> (ExitStatus, 
         let rustflags = format!("{rustflags} -l{libctru}");
 
         command.env("RUSTFLAGS", rustflags);
+
+        // C Compilation Flags
+        let devkitpro = std::env::var("DEVKITPRO").unwrap_or_default();
+        let devkitarm = std::env::var("DEVKITARM").unwrap_or_default();
+
+        command.env("CRATE_CC_NO_DEFAULTS_armv6k-nintendo-3ds", "");
+
+        command.env(
+            "CC_armv6k-nintendo-3ds",
+            devkitarm.clone() + "/bin/arm-none-eabi-gcc",
+        );
+
+        command.env(
+            "CXX_armv6k-nintendo-3ds",
+            devkitarm.clone() + "/bin/arm-none-eabi-g++",
+        );
+
+        command.env(
+            "AR_armv6k-nintendo-3ds",
+            devkitarm.clone() + "/bin/arm-none-eabi-gcc-ar",
+        );
+
+        let cflags = format!(
+            "-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft \
+            -ffunction-sections -fdata-sections -D_3DS -D__3DS__ -I{devkitpro}/libctru/include"
+        );
+
+        command.env("CFLAGS_armv6k-nintendo-3ds", &cflags);
+        command.env("CXXFLAGS_armv6k-nintendo-3ds", &cflags);
     }
 
     if input.verbose {
