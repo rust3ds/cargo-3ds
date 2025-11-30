@@ -263,7 +263,7 @@ pub fn check_rust_version(input: &Input) {
 pub(crate) fn get_artifact_config(package: Package, artifact: Artifact) -> CTRConfig {
     // For now, assume a single "kind" per artifact. It seems to be the case
     // when a single executable is built anyway but maybe not in all cases.
-    let name = match artifact.target.kind[0] {
+    let package_name = match artifact.target.kind[0] {
         Bin | Lib | RLib | DyLib if artifact.profile.test => {
             format!("{} tests", artifact.target.name)
         }
@@ -283,7 +283,7 @@ pub(crate) fn get_artifact_config(package: Package, artifact: Artifact) -> CTRCo
         .unwrap_or_default();
 
     CTRConfig {
-        name,
+        package_name,
         authors: config.authors.or(Some(package.authors)),
         description: config.description.or(package.description),
         manifest_dir: package.manifest_path.parent().unwrap().into(),
@@ -374,11 +374,13 @@ pub struct CTRConfig {
     #[serde(alias = "romfs-dir")]
     romfs_dir: Option<Utf8PathBuf>,
 
+    /// The name of the application, defaulting to the package name if not specified.
+    name: Option<String>,
+
     // Remaining fields come from cargo metadata / build artifact output and
-    // cannot be customized by users in `package.metadata.cargo-3ds`. I suppose
-    // in theory we could allow name to be customizable if we wanted...
+    // cannot be customized by users in `package.metadata.cargo-3ds`.
     #[serde(skip)]
-    name: String,
+    package_name: String,
     #[serde(skip)]
     target_path: Utf8PathBuf,
     #[serde(skip)]
@@ -428,7 +430,7 @@ impl CTRConfig {
         let mut command = Command::new("smdhtool");
         command
             .arg("--create")
-            .arg(&self.name)
+            .arg(self.name.as_ref().unwrap_or(&self.package_name))
             .arg(description)
             .arg(publisher)
             .arg(icon_path)
